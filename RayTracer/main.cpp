@@ -1,0 +1,351 @@
+//============================================================================
+//	Johns Hopkins University Engineering Programs for Professionals
+//	605.767 Applied Computer Graphics
+//	Instructor:	Brian Russin
+//
+//	Author:  David W. Nesbitt
+//	File:    RayTracer/main.cpp
+//	Purpose: OpenGL program to draw polygon mesh objects.
+//
+//============================================================================
+
+#include "common/event.hpp"
+#include "common/logging.hpp"
+#include "filesystem_support/file_locator.hpp"
+#include "geometry/geometry.hpp"
+#include "scene/graphics.hpp"
+#include "scene/scene.hpp"
+
+#include "RayTracer/framebuffer.hpp"
+#include "RayTracer/lighting.hpp"
+#include "RayTracer/ray_tracer.hpp"
+
+#include <chrono>
+#include <iostream>
+#include <thread>
+#include <vector>
+
+#define MULTITHREAD
+
+// SDL Objects
+SDL_Window   *g_sdl_window = nullptr;
+SDL_GLContext g_gl_context;
+
+// Window width and height. Developement trick: for faster ray tracing keep
+// these values small until final image is ready
+int32_t g_image_width = 640;
+int32_t g_image_height = 480;
+
+// Constants. Set up the view plane a distance of 1.0 from the camera.
+// Set a field of view angle of 60 degrees.
+float g_near_plane_distance = 1.0f;
+float g_far_plane_distance = 300.0f;
+float g_field_of_view = 60.0;
+
+// Camera support. This will be part of the scene graph but keep a global pointer
+// so we can maniplulate it with GLUT
+std::shared_ptr<cg::CameraNode> g_camera;
+
+// Framebuffer
+std::unique_ptr<cg::Framebuffer> g_frame_buffer;
+
+// Maximum depth to trace and adaptive threshold.
+int32_t     g_max_depth = 15;
+const float DEPTH_THRESHOLD = 0.025f;
+
+// Ray Tracer
+cg::RayTracer *g_ray_tracer = 0;
+
+// Scene construction
+std::shared_ptr<cg::SceneNode> g_scene_root;
+
+std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> camera)
+{
+    // 605.767 - Student to define. Create a scene graph to describe your scene
+    auto scene_node = std::make_shared<cg::SceneNode>();
+    return scene_node;
+}
+
+void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
+{
+    for(int32_t row = start_row; row <= end_row; ++row)
+    {
+        int32_t y = row * block_size;
+        for(int32_t x = 0; x < g_image_width; x += block_size)
+        {
+            // Check if framebuffer has been set for this pixel
+            if(!g_frame_buffer->set(x, y))
+            {
+                // Construct a ray through the specified pixel and find the color
+                // using the recursive ray tracer
+                cg::Ray3 ray =
+                    g_camera->construct_ray(static_cast<float>(x), static_cast<float>(y));
+                cg::Color3 color = g_ray_tracer->trace_ray(ray, g_max_depth, DEPTH_THRESHOLD);
+                g_frame_buffer->set(x, y, color, block_size);
+            }
+        }
+    }
+}
+
+#ifdef MULTITHREAD
+
+/**
+ * Display function, multi-threaded
+ */
+void display()
+{
+    int32_t num_threads = std::thread::hardware_concurrency() - 1;
+    num_threads = num_threads > 0 ? num_threads : 1;
+
+    // Clear the memory framebuffer
+    g_frame_buffer->clear();
+
+    for(int32_t block_size = cg::FB_BLOCK_SIZE; block_size > 0; block_size /= 2)
+    {
+        std::thread *threads = new std::thread[num_threads];
+        int32_t      num_rows = g_image_height / block_size;
+        int32_t      start_row = 0;
+
+        for(int32_t t_i = 0; t_i < num_threads; ++t_i)
+        {
+            int32_t end_row = std::min((t_i + 1) * num_rows / num_threads, num_rows - 1);
+            threads[t_i] = std::thread(render_rows, start_row, end_row, block_size);
+            start_row = end_row + 1;
+        }
+
+        // Wait for threads to complete
+        for(int32_t t_i = 0; t_i < num_threads; ++t_i) { threads[t_i].join(); }
+
+        g_frame_buffer->render();
+        SDL_GL_SwapWindow(g_sdl_window);
+    }
+
+    // Final scene - simple anti-aliasing (without shooting additional rays)
+    g_frame_buffer->anti_alias();
+    SDL_GL_SwapWindow(g_sdl_window);
+}
+
+#else
+
+/**
+ * Display function, single-threaded
+ */
+void display()
+{
+    // Clear the memory framebuffer
+    g_frame_buffer->clear();
+
+    for(int32_t block_size = cg::FB_BLOCK_SIZE; block_size > 0; block_size /= 2)
+    {
+        render_rows(0, g_image_height+1, block_size);
+        
+        g_frame_buffer->render();
+        SDL_GL_SwapWindow(g_sdl_window);
+    }
+
+    // Final scene - simple anti-aliasing (without shooting additional rays)
+    g_frame_buffer->anti_alias();
+    SDL_GL_SwapWindow(g_sdl_window);
+}
+
+#endif
+
+/**
+ * Reshape method.
+ */
+void reshape(int32_t width, int32_t height)
+{
+    // Update the view colume
+    g_camera->set_view_volume(
+        width, height, g_field_of_view, g_near_plane_distance, g_far_plane_distance);
+    g_image_width = width;
+    g_image_height = height;
+
+    // Create framebuffer (old pointer is automatically deleted)
+    g_frame_buffer = std::make_unique<cg::Framebuffer>(width, height);
+
+    glViewport(0, 0, width, height);
+}
+
+/**
+ * Window event handler.
+ */
+cg::EventType handle_window_event(const SDL_Event &event)
+{
+    cg::EventType result = cg::EventType::NONE;
+
+    switch(event.type)
+    {
+        case SDL_EVENT_WINDOW_RESIZED:
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            reshape(event.window.data1, event.window.data2);
+            result = cg::EventType::REDRAW;
+            break;
+        default: break;
+    }
+
+    return result;
+}
+
+/**
+ * Keyboard event handler.
+ */
+cg::EventType handle_key_event(const SDL_Event &event)
+{
+    cg::EventType result = cg::EventType::NONE;
+
+    bool upper_case = (event.key.mod & SDL_KMOD_SHIFT) || (event.key.mod & SDL_KMOD_CAPS);
+
+    switch(event.key.key)
+    {
+        case SDLK_ESCAPE: result = cg::EventType::EXIT; break;
+
+        // Roll the camera by +/-5 degrees (no need to update spotlight)
+        case SDLK_R:
+            if(upper_case) g_camera->roll(-5);
+            else g_camera->roll(5);
+            result = cg::EventType::REDRAW;
+            break;
+
+        // Change the pitch of the camera by +/-5 degrees
+        case SDLK_P:
+            if(upper_case) g_camera->pitch(-5);
+            else g_camera->pitch(5);
+            result = cg::EventType::REDRAW;
+            break;
+
+        // Change the heading of the camera by +/-5 degrees
+        case SDLK_H:
+            if(upper_case) g_camera->heading(-5);
+            else g_camera->heading(5);
+            result = cg::EventType::REDRAW;
+            break;
+
+        default: break;
+    }
+
+    return result;
+}
+
+/**
+ * Handle Events function.
+ */
+cg::EventType handle_events()
+{
+    cg::EventType result = cg::EventType::NONE;
+    SDL_Event     e;
+    while(SDL_PollEvent(&e))
+    {
+        switch(e.type)
+        {
+            case SDL_EVENT_QUIT:
+            case SDL_EVENT_WINDOW_CLOSE_REQUESTED: result |= cg::EventType::EXIT; break;
+
+            case SDL_EVENT_WINDOW_RESIZED:
+            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: result |= handle_window_event(e); break;
+
+            case SDL_EVENT_KEY_UP: break;
+            case SDL_EVENT_KEY_DOWN: result |= handle_key_event(e); break;
+
+            default: break;
+        }
+    }
+    return result;
+}
+
+// Sleep function to help run a reasonable timer
+void sleep(int32_t milliseconds)
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+}
+
+/**
+ * Main
+ */
+int main(int argc, char **argv)
+{
+    cg::set_root_paths(argv[0]);
+    cg::init_logging("RayTracer.log");
+
+    // Print options
+    std::cout << "Transforms:" << std::endl;
+    std::cout << "r,R - Change camera roll\n";
+    std::cout << "p,P - Change camera pitch\n";
+    std::cout << "h,H - Change camera heading\n";
+
+    // Initialize SDL
+    if(!SDL_Init(SDL_INIT_VIDEO))
+    {
+        std::cout << "Error initializing SDL: " << SDL_GetError() << '\n';
+        exit(1);
+    }
+
+    // Initialize display mode and window
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+
+    SDL_PropertiesID props = SDL_CreateProperties();
+    if(props == 0)
+    {
+        std::cout << "Error creating SDL Window Properties: " << SDL_GetError() << '\n';
+        exit(1);
+    }
+
+    // Initialize display mode and window
+    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Ray Tracer Mesh Objects");
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_OPENGL_BOOLEAN, true);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, g_image_width);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, g_image_height);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, 100);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, 100);
+
+    g_sdl_window = SDL_CreateWindowWithProperties(props);
+    if(g_sdl_window == nullptr)
+    {
+        std::cout << "Error initializing SDL Window" << SDL_GetError() << '\n';
+        exit(1);
+    }
+
+    // Initialize OpenGL
+    g_gl_context = SDL_GL_CreateContext(g_sdl_window);
+
+    std::cout << "OpenGL  " << glGetString(GL_VERSION) << ", GLSL "
+              << glGetString(GL_SHADING_LANGUAGE_VERSION) << '\n';
+
+#if BUILD_WINDOWS
+    int32_t glew_init_result = glewInit();
+    if(GLEW_OK != glew_init_result)
+    {
+        std::cout << "GLEW Error: " << glewGetErrorString(glew_init_result) << std::endl;
+        exit(EXIT_FAILURE);
+    }
+#endif
+
+    g_frame_buffer = std::make_unique<cg::Framebuffer>(g_image_width, g_image_height);
+
+    // 605.767 - Student to define. Set up camera parameters for initial view.
+    g_camera = std::make_shared<cg::CameraNode>();
+
+    // Construct the scene, pass in the camera node to add to the root node.
+    auto scene_root = construct_scene(g_camera);
+
+    // Construct ray tracer. Pass in the scene graph root node
+    g_ray_tracer = new cg::RayTracer(scene_root);
+
+    // Main loop
+    cg::EventType event_result = cg::EventType::NONE;
+    while(true)
+    {
+        event_result = handle_events();
+
+        if(event_result & cg::EventType::EXIT) break;
+
+        if(event_result & cg::EventType::REDRAW) display();
+    }
+
+    // Destroy OpenGL Context, SDL Window and SDL
+    SDL_GL_DestroyContext(g_gl_context);
+    SDL_DestroyWindow(g_sdl_window);
+    SDL_Quit();
+    return 0;
+}

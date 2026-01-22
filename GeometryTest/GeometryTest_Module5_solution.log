@@ -1,0 +1,8 @@
+Ray Tests
+   Ray1 does not intersect sphere
+   Ray2 does not intersect sphere
+   Ray3 intersects sphere at -1.464102 4.000000 0.000000, t = 8.535898
+   Ray4 intersects sphere at 4.000000 5.464102 0.000000, t = 1.464102
+   Ray5 intersects sphere at 4.000000 5.464102 0.000000, t = 5.464102
+   Ray6 does not intersect sphere
+   
