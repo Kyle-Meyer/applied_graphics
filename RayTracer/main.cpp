@@ -326,6 +326,13 @@ int main(int argc, char **argv)
     // 605.767 - Student to define. Set up camera parameters for initial view.
     g_camera = std::make_shared<cg::CameraNode>();
 
+    // Initialize camera position and orientation
+    g_camera->set_position_and_look_at_pt(cg::Point3(0.0f, 0.0f, 10.0f), cg::Point3(0.0f, 0.0f, 0.0f));
+
+    // Initialize view volume for ray tracing
+    g_camera->set_view_volume(
+        g_image_width, g_image_height, g_field_of_view, g_near_plane_distance, g_far_plane_distance);
+
     // Construct the scene, pass in the camera node to add to the root node.
     auto scene_root = construct_scene(g_camera);
 
@@ -334,6 +341,9 @@ int main(int argc, char **argv)
 
     // Main loop
     cg::EventType event_result = cg::EventType::NONE;
+
+    // Trigger initial render
+    display();
     while(true)
     {
         event_result = handle_events();

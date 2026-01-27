@@ -22,15 +22,6 @@ Color3 RayTracer::trace_ray(Ray3 &initial_ray, int depth, float adaptive_thresho
 
 Color3 RayTracer::trace_ray(Ray &ray)
 {
-    // FOR TESTING ONLY: Delete or comment out the following block
-    {
-        // Return color for checkerboard pattern that is N-pixels squared
-        constexpr float N = 50.0f; // Grid cell dimension
-        const Color3    dark_color(0.2f, 0.2f, 0.2f);
-        const Color3    light_color(0.8f, 0.8f, 0.8f);
-        if((static_cast<int>(ray.o.x / N) + static_cast<int>(ray.o.y / N)) % 2) return dark_color;
-        else return light_color;
-    }
 
     // Hint: try moving the origin of the ray slightly along the ray direction to prevent
     // self intersection
@@ -41,7 +32,7 @@ Color3 RayTracer::trace_ray(Ray &ray)
     scene_root_->find_closest_intersect(ray, current_state, closest);
 
     // If no object hit, return background value
-    if(!closest.geometry_node) { return Color3(0.0f, 0.0f, 0.0f); }
+    if(!closest.geometry_node) { return Color3(1.0f, 0.0f, 0.0f); }
 
     // Get the nearest object and state
     MaterialNode *material = (MaterialNode *)closest.material_node;

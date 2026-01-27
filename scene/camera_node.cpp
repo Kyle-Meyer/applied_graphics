@@ -200,16 +200,22 @@ void CameraNode::set_view_volume(uint32_t width, uint32_t height, float fov_y, f
 
 Ray3 CameraNode::construct_ray(float x, float y) const
 {
-    // FOR TESTING ONLY: Delete or comment out the following block
-    {
-        // Return ray origin used for checkerboard pattern
-        Ray3 ray;
-        ray.o = Point3(x, y, 0.0f);
-        return ray;
-    }
+    // Map pixel coordinates to image plane coordinates
+    // Add 0.5 to sample at pixel center
+    // Normalize to [-1, 1] range, then scale by half dimensions
+    float u = ((x + 0.5f) / static_cast<float>(image_width_) * 2.0f - 1.0f) * half_width_;
+    float v = (1.0f - (y + 0.5f) / static_cast<float>(image_height_) * 2.0f) * half_height_;
 
-    // Complete in 605.767
-    return {};
+    // Calculate point on the image plane
+    // Start at camera position, move to near plane (forward = -view_normal_),
+    // then offset by u (horizontal) and v (vertical)
+    Point3 point_on_plane = vrp_ - view_normal_ * near_clip_ + view_right_ * u + view_up_ * v;
+
+    // Construct ray from camera position through the point on the image plane
+    // The direction vector points from camera to the point on the plane
+    // Use normalize=true to ensure unit length direction
+    Vector3 direction(vrp_, point_on_plane);
+    return Ray3(vrp_, direction, true);
 }
 
 void CameraNode::look_at()
