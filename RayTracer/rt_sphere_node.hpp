@@ -24,7 +24,7 @@ namespace cg
 /**
  * Sphere for ray tracing.
  */
-class RTSphereNode : GeometryNode
+class RTSphereNode : public GeometryNode
 {
   public:
     /**
@@ -47,7 +47,14 @@ class RTSphereNode : GeometryNode
      * @param   int_pt  Intersection point with the sphere
      * @return  Returns a unit length normal at the intersection point.
      */
-    Vector3 get_normal(const Point3 &int_pt);
+    Vector3 get_normal(const Point3 &int_pt) override;
+
+    /**
+     * Get the texture coordinate at an intersection point using spherical mapping.
+     * @param  int_pt  Intersection point on the sphere surface
+     * @return Returns the texture coordinate (s, t) at the intersection point
+     */
+    Point2 get_texture_coord(const Point3 &int_pt) override;
 
     /**
      * Ray tracing intersect method

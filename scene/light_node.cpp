@@ -126,4 +126,5 @@ void LightNode::draw(SceneState &scene_state)
     glUniform1i(scene_state.lights[index_].enabled, 0);
 }
 
+
 } // namespace cg

@@ -18,7 +18,9 @@
 
 #include "RayTracer/framebuffer.hpp"
 #include "RayTracer/lighting.hpp"
+#include "RayTracer/material_node.hpp"
 #include "RayTracer/ray_tracer.hpp"
+#include "RayTracer/rt_sphere_node.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -63,6 +65,32 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
 {
     // 605.767 - Student to define. Create a scene graph to describe your scene
     auto scene_node = std::make_shared<cg::SceneNode>();
+
+    // TEST SCENE: One red sphere directly in front of camera
+    // Camera is at (0, 0, 10) looking at (0, 0, 0)
+    // Sphere at origin with radius 2
+
+    // Red sphere at origin
+    auto material = std::make_shared<cg::MaterialNode>();
+    material->set_ambient_and_diffuse(cg::Color4(0.8f, 0.2f, 0.2f, 1.0f));
+    material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
+    material->set_shininess(64.0f);
+
+    // Sphere in front of camera: camera at (0,0,10) looks at (0,0,0)
+    // Put sphere at Z=0 (where camera is looking) with small radius
+    // Smaller radius (0.5) so we can see background around it
+    auto sphere = std::make_shared<cg::RTSphereNode>(cg::Point3(0.0f, 0.0f, 0.0f), 0.5f);
+    material->add_child(std::static_pointer_cast<cg::SceneNode>(sphere));
+    scene_node->add_child(material);
+
+    // Add one light source
+    auto light = std::make_shared<cg::LightNode>(0);
+    light->set_position(cg::HPoint3(5.0f, 5.0f, 10.0f, 1.0f));
+    light->set_diffuse(cg::Color3(1.0f, 1.0f, 1.0f));
+    light->set_specular(cg::Color3(1.0f, 1.0f, 1.0f));
+    light->enable();
+    scene_node->add_child(light);
+
     return scene_node;
 }
 
@@ -327,7 +355,8 @@ int main(int argc, char **argv)
     g_camera = std::make_shared<cg::CameraNode>();
 
     // Initialize camera position and orientation
-    g_camera->set_position_and_look_at_pt(cg::Point3(0.0f, 0.0f, 10.0f), cg::Point3(0.0f, 0.0f, 0.0f));
+    // Move camera much further back to see the sphere better
+    g_camera->set_position_and_look_at_pt(cg::Point3(0.0f, 10.0f, 5.0f), cg::Point3(0.0f, 0.0f, 0.0f));
 
     // Initialize view volume for ray tracing
     g_camera->set_view_volume(
