@@ -58,6 +58,9 @@ const float DEPTH_THRESHOLD = 0.025f;
 // Ray Tracer
 cg::RayTracer *g_ray_tracer = 0;
 
+// Lights (need to keep pointers to add to ray tracer)
+std::vector<cg::LightNode *> g_lights;
+
 // Scene construction
 std::shared_ptr<cg::SceneNode> g_scene_root;
 
@@ -83,13 +86,28 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     material->add_child(std::static_pointer_cast<cg::SceneNode>(sphere));
     scene_node->add_child(material);
 
+    // Add a floor using a very large sphere (appears nearly flat)
+    auto floor_material = std::make_shared<cg::MaterialNode>();
+    floor_material->set_ambient_and_diffuse(cg::Color4(0.4f, 0.4f, 0.5f, 1.0f));
+    floor_material->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
+    floor_material->set_shininess(16.0f);
+
+    // Large sphere with center far below, surface at y = -1
+    // Radius 1000, center at (0, -1001, 0) puts the top of the sphere at y = -1
+    auto floor = std::make_shared<cg::RTSphereNode>(cg::Point3(0.0f, -1001.0f, 0.0f), 1000.0f);
+    floor_material->add_child(std::static_pointer_cast<cg::SceneNode>(floor));
+    scene_node->add_child(floor_material);
+
     // Add one light source
     auto light = std::make_shared<cg::LightNode>(0);
     light->set_position(cg::HPoint3(5.0f, 5.0f, 10.0f, 1.0f));
-    light->set_diffuse(cg::Color3(1.0f, 1.0f, 1.0f));
-    light->set_specular(cg::Color3(1.0f, 1.0f, 1.0f));
+    light->set_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
+    light->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
     light->enable();
     scene_node->add_child(light);
+
+    // Store light pointer for ray tracer
+    g_lights.push_back(light.get());
 
     return scene_node;
 }
@@ -356,8 +374,8 @@ int main(int argc, char **argv)
 
     // Initialize camera position and orientation
     // Move camera much further back to see the sphere better
-    g_camera->set_position_and_look_at_pt(cg::Point3(0.0f, 10.0f, 5.0f), cg::Point3(0.0f, 0.0f, 0.0f));
-
+    g_camera->set_position_and_look_at_pt(cg::Point3(7.0f, 0.5f, -5.0f), cg::Point3(0.0f, 0.0f, 0.0f));
+    g_camera->set_view_up(cg::Vector3(0.0f, 1.0f, 0.0f));  // Y is up
     // Initialize view volume for ray tracing
     g_camera->set_view_volume(
         g_image_width, g_image_height, g_field_of_view, g_near_plane_distance, g_far_plane_distance);
@@ -367,6 +385,12 @@ int main(int argc, char **argv)
 
     // Construct ray tracer. Pass in the scene graph root node
     g_ray_tracer = new cg::RayTracer(scene_root);
+
+    // Add lights to the ray tracer
+    for(cg::LightNode *light : g_lights) { g_ray_tracer->add_light(light); }
+
+    // Set view position for lighting calculations
+    g_ray_tracer->set_view_position(g_camera->get_position());
 
     // Main loop
     cg::EventType event_result = cg::EventType::NONE;

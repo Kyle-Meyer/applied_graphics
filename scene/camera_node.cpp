@@ -18,7 +18,7 @@ CameraNode::CameraNode()
     // Initial view settings
     lpt_ = Point3(0.0f, 0.0f, 0.0f);
     vrp_ = Point3(0.0f, 0.0f, 1.0f);
-    view_up_ = Vector3(0.0f, 0.0f, 1.0f);
+    view_up_ = Vector3(0.0f, -1.0f, 0.0f);  // Y-up
     nomimal_view_up_ = view_up_;
 }
 

@@ -16,6 +16,9 @@
 #include "RayTracer/procedural_texture.hpp"
 #include "RayTracer/ray.hpp"
 #include "scene/geometry_node.hpp"
+#include "scene/light_node.hpp"
+
+#include <vector>
 
 namespace cg
 {
@@ -48,9 +51,16 @@ class RayTracer
      */
     void set_view_position(const Point3 &pos);
 
+    /**
+     * Add a light to the ray tracer.
+     * @param light  Pointer to the light node
+     */
+    void add_light(LightNode *light);
+
   private:
     Lighting                   lighting_;
     std::shared_ptr<SceneNode> scene_root_;
+    std::vector<LightNode *>   lights_;
 
     /**
      * Tests if the intersect point is in shadow with respect to the

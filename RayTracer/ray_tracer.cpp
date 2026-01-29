@@ -1,5 +1,7 @@
 #include "RayTracer/ray_tracer.hpp"
 
+#include "geometry/geometry.hpp"
+
 #include <iostream>
 
 namespace cg
@@ -24,10 +26,6 @@ Color3 RayTracer::trace_ray(Ray3 &initial_ray, int depth, float adaptive_thresho
 
 Color3 RayTracer::trace_ray(Ray &ray)
 {
-
-    // Hint: try moving the origin of the ray slightly along the ray direction to prevent
-    // self intersection
-
     // Traverse the scene graph to find closest intersecting object
     SceneState current_state;
     SceneState closest;
@@ -50,46 +48,53 @@ Color3 RayTracer::trace_ray(Ray &ray)
     // Get the normal (transform if needed)
     Vector3 normal = nearest_object->get_normal(int_pt);
 
-    // PART 2 TEST: Visualize the normal as a color to prove get_normal() works
-    // Map normal from [-1,1] to [0,1] color range
-    Color3 color((normal.x + 1.0f) * 0.5f,
-                 (normal.y + 1.0f) * 0.5f,
-                 (normal.z + 1.0f) * 0.5f);
-
-    // Print debug info for center pixel
-    static bool printed = false;
-    if(!printed && std::abs(ray.d.x) < 0.01f && std::abs(ray.d.y) < 0.01f) {
-        printed = true;
-        std::cout << "\n=== PART 2 TEST (Center Ray) ===\n";
-        std::cout << "Ray hit sphere: YES\n";
-        std::cout << "Intersection point: (" << int_pt.x << ", " << int_pt.y << ", " << int_pt.z << ")\n";
-        std::cout << "Normal at intersection: (" << normal.x << ", " << normal.y << ", " << normal.z << ")\n";
-        std::cout << "Normal length: " << normal.norm() << " (should be ~1.0)\n";
-
-        Point2 tex = nearest_object->get_texture_coord(int_pt);
-        std::cout << "Texture coord: (" << tex.x << ", " << tex.y << ")\n";
-        std::cout << "\nExpected: Normal should point from sphere center toward camera\n";
-        std::cout << "Sphere center is at (0,0,0), camera at (0,0,10)\n";
-        std::cout << "So normal at front should be approximately (0, 0, 1)\n";
-        std::cout << "\nColor on screen: Normal mapped to RGB color\n";
-        std::cout << "You should see a sphere with color gradient showing normals.\n";
-        std::cout << "==================================\n\n";
+    // Check if material exists
+    if(!material)
+    {
+        // No material - return a default gray color
+        return Color3(0.5f, 0.5f, 0.5f);
     }
 
-    // Get the texture color if the intersected object has a texture
+    // Start with ambient contribution
+    Color3 color = lighting_.get_ambient(material);
 
-    // Get local color contribution. Iterate through the active lights, check if in shadow.
+    // Add emission if any
+    const Color4 &emission = material->get_emission();
+    color.r += emission.r;
+    color.g += emission.g;
+    color.b += emission.b;
 
-    // Calculate the local color. Modulate texture color.
+    // Iterate through all lights
+    for(LightNode *light : lights_)
+    {
+        // Get light position
+        Point3 light_pos = light->get_position();
 
-    // Return if max depth is reached or attenuation is below threshold
+        // Check if point is in shadow with respect to this light
+        if(!in_shadow(int_pt, light_pos, nearest_object))
+        {
+            // Not in shadow - compute diffuse and specular contribution
+            Color3 diffuse, specular;
+            lighting_.local_contribution(light, material, int_pt, normal, diffuse, specular);
+
+            // Add light contribution
+            color.r += diffuse.r + specular.r;
+            color.g += diffuse.g + specular.g;
+            color.b += diffuse.b + specular.b;
+        }
+    }
+
+    // TODO: Get the texture color if the intersected object has a texture
+    // and modulate the color
+
+    // TODO: Return if max depth is reached or attenuation is below threshold
     // (do not spawn additional rays)
 
-    // Reverse the normal direction if the ray is inside
+    // TODO: Reverse the normal direction if the ray is inside
 
-    // Spawn a reflected ray if material is reflective - add to color
+    // TODO: Spawn a reflected ray if material is reflective - add to color
 
-    // Spawn a transmitted ray if material is transparent - add to color
+    // TODO: Spawn a transmitted ray if material is transparent - add to color
 
     // Clamp color
     color.clamp();
@@ -98,10 +103,27 @@ Color3 RayTracer::trace_ray(Ray &ray)
 
 void RayTracer::set_view_position(const Point3 &pos) { lighting_.set_view_position(pos); }
 
+void RayTracer::add_light(LightNode *light) { lights_.push_back(light); }
+
 bool RayTracer::in_shadow(const Point3 &int_pt, Point3 &light_pos, SceneNode *current_obj)
 {
-    // Complete in 605.767.
-    return false;
+    // Construct a shadow ray from the intersection point toward the light
+    Vector3 to_light(int_pt, light_pos);
+    float   distance_to_light = to_light.norm();
+    to_light.normalize();
+
+    // Offset the ray origin slightly to prevent self-intersection
+    Point3 shadow_origin = int_pt + to_light * EPSILON;
+
+    // Create the shadow ray
+    Ray3 shadow_ray(shadow_origin, to_light);
+
+    // Set up scene state - store current object so convex objects can skip self-test
+    SceneState current_state;
+    current_state.geometry_node = current_obj;
+
+    // Check if any object blocks the path to the light
+    return scene_root_->does_intersect_exist(shadow_ray, distance_to_light, current_state);
 }
 
 } // namespace cg
