@@ -26,7 +26,7 @@ Ray Ray::get_refracted_ray(const Point3       &int_pt,
 bool Ray::below_threshold()
 {
     // Complete in 605.767 - ray tracing project.
-    return false;
+    return recursion_level_ <= 0;
 }
 
 } // namespace cg

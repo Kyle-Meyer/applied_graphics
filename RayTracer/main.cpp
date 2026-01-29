@@ -98,6 +98,17 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     floor_material->add_child(std::static_pointer_cast<cg::SceneNode>(floor));
     scene_node->add_child(floor_material);
 
+    auto mirror_material = std::make_shared<cg::MaterialNode>();
+    mirror_material->set_ambient_and_diffuse(cg::Color4(0.1f, 0.1f, 0.1f, 1.0f));
+    mirror_material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
+    mirror_material->set_shininess(128.0f);
+    mirror_material->set_global_reflectivity(0.8f, 0.8f, 0.8f);  // Highly reflective
+    
+    auto mirror_sphere = std::make_shared<cg::RTSphereNode>(
+        cg::Point3(-2.0f, 0.0f, 0.0f), 0.5f);
+    mirror_material->add_child(std::static_pointer_cast<cg::SceneNode>(mirror_sphere));
+    scene_node->add_child(mirror_material);
+
     // Add one light source
     auto light = std::make_shared<cg::LightNode>(0);
     light->set_position(cg::HPoint3(5.0f, 5.0f, 10.0f, 1.0f));
