@@ -31,8 +31,40 @@ Ray3 Ray3::reflect(const Point3 &int_pt, const Vector3 &n) const
 
 RayRefractionResult Ray3::refract(const Point3 &int_pt, Vector3 &n, float u1, float u2) const
 {
-    // Required in 605.767
-    return RayRefractionResult{};
+    // Snell's law: n1 * sin(theta1) = n2 * sin(theta2)
+    // Refracted direction: T = eta * I + (eta * cos_i - cos_t) * N
+    // where eta = n1/n2
+
+    float eta = u1 / u2;
+    float n_dot_d = n.dot(d);
+    float cos_i = -n_dot_d;
+
+    // Ensure cos_i is positive (handle floating point precision issues)
+    if (cos_i < 0.0f)
+    {
+        // Normal is pointing wrong way, flip it
+        n = n * -1.0f;
+        cos_i = -cos_i;
+    }
+
+    float sin_t2 = eta * eta * (1.0f - cos_i * cos_i);
+
+    // Check for total internal reflection
+    if (sin_t2 > 1.0f)
+    {
+        return RayRefractionResult{Ray3(), true};
+    }
+
+    float cos_t = std::sqrt(1.0f - sin_t2);
+
+    // Compute refracted direction
+    Vector3 refract_dir = d * eta + n * (eta * cos_i - cos_t);
+    refract_dir.normalize();
+
+    // Offset origin slightly in refracted direction to avoid self-intersection
+    Point3 refract_origin = int_pt + refract_dir * EPSILON;
+
+    return RayRefractionResult{Ray3(refract_origin, refract_dir), false};
 }
 
 Point3 Ray3::intersect(const float t) const { return o + d * t; }

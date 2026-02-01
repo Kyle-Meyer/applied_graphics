@@ -26,7 +26,7 @@ namespace cg
 constexpr float PI = static_cast<float>(CG_PI);
 constexpr float PHI = static_cast<float>(CG_PHI);
 constexpr float PHI_INV = static_cast<float>(CG_PHI_INV);
-constexpr float EPSILON = 0.000001f;
+constexpr float EPSILON = 0.0001f;  // Larger value needed for ray tracing to avoid self-intersection
 constexpr float RADIANS_PER_DEGREE = static_cast<float>(180.0 / CG_PI);
 constexpr float DEGREES_PER_RADIAN = static_cast<float>(CG_PI / 180.0);
 

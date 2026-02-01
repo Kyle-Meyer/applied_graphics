@@ -95,28 +95,24 @@ Color3 RayTracer::trace_ray(Ray &ray)
        return color;
     }
 
-    // TODO: Reverse the normal direction if the ray is inside
-    Vector3 adjusted_normal;
-    if(ray.d.dot(normal) > 0.0f)
-       adjusted_normal = -1 * normal;
-
-    // TODO: Spawn a reflected ray if material is reflective - add to color
-    if (material->is_reflective()) 
+    // Spawn a reflected ray if material is reflective - add to color
+    if (material->is_reflective())
     {
         // Compute reflection direction: R = D - 2(D·N)N
-        Vector3 reflect_dir = ray.d - adjusted_normal * (2.0f * ray.d.dot(adjusted_normal));
+        // This formula works correctly regardless of which side we hit from
+        Vector3 reflect_dir = ray.d - normal * (2.0f * ray.d.dot(normal));
         reflect_dir.normalize();
-        
+
         // Create reflected ray origin slightly offset from surface
         Point3 reflect_origin = int_pt + reflect_dir * EPSILON;
-        
+
         // Create reflected ray with decremented recursion level
         Ray3 reflected_ray3(reflect_origin, reflect_dir);
         Ray reflected_ray(reflected_ray3, ray.recursion_level_ - 1, ray.threshold_);
-        
+
         // Recursively trace reflected ray
         Color3 reflected_color = trace_ray(reflected_ray);
-        
+
         // Add reflected contribution weighted by reflectivity
         const Color3& reflectivity = material->get_global_reflectivity();
         color.r += reflected_color.r * reflectivity.r;
@@ -124,7 +120,41 @@ Color3 RayTracer::trace_ray(Ray &ray)
         color.b += reflected_color.b * reflectivity.b;
     }
 
-    // TODO: Spawn a transmitted ray if material is transparent - add to color
+    // Spawn a transmitted ray if material is transparent - add to color
+    if (material->is_transparent())
+    {
+        bool total_internal_reflection = false;
+        Ray refracted_ray = ray.get_refracted_ray(int_pt, normal, material, total_internal_reflection);
+
+        if (!total_internal_reflection)
+        {
+            // Recursively trace refracted ray
+            Color3 refracted_color = trace_ray(refracted_ray);
+
+            // Add refracted contribution weighted by transmission coefficients
+            const Color3& transmission = material->get_global_transmission();
+            color.r += refracted_color.r * transmission.r;
+            color.g += refracted_color.g * transmission.g;
+            color.b += refracted_color.b * transmission.b;
+        }
+        else
+        {
+            // Total internal reflection - treat as reflection
+            Vector3 reflect_dir = ray.d - normal * (2.0f * ray.d.dot(normal));
+            reflect_dir.normalize();
+            Point3 reflect_origin = int_pt + reflect_dir * EPSILON;
+
+            Ray3 reflected_ray3(reflect_origin, reflect_dir);
+            Ray reflected_ray(reflected_ray3, ray.recursion_level_ - 1, ray.threshold_);
+
+            Color3 reflected_color = trace_ray(reflected_ray);
+
+            const Color3& transmission = material->get_global_transmission();
+            color.r += reflected_color.r * transmission.r;
+            color.g += reflected_color.g * transmission.g;
+            color.b += reflected_color.b * transmission.b;
+        }
+    }
 
     // Clamp color
     color.clamp();

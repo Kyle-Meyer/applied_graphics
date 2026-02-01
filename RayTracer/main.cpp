@@ -21,6 +21,8 @@
 #include "RayTracer/material_node.hpp"
 #include "RayTracer/ray_tracer.hpp"
 #include "RayTracer/rt_sphere_node.hpp"
+#include "RayTracer/rt_quad_node.hpp"
+#include "RayTracer/rt_mesh_node.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -35,8 +37,8 @@ SDL_GLContext g_gl_context;
 
 // Window width and height. Developement trick: for faster ray tracing keep
 // these values small until final image is ready
-int32_t g_image_width = 640;
-int32_t g_image_height = 480;
+int32_t g_image_width = 1280;
+int32_t g_image_height = 960;
 
 // Constants. Set up the view plane a distance of 1.0 from the camera.
 // Set a field of view angle of 60 degrees.
@@ -69,22 +71,14 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     // 605.767 - Student to define. Create a scene graph to describe your scene
     auto scene_node = std::make_shared<cg::SceneNode>();
 
-    // TEST SCENE: One red sphere directly in front of camera
-    // Camera is at (0, 0, 10) looking at (0, 0, 0)
-    // Sphere at origin with radius 2
-
-    // Red sphere at origin
-    auto material = std::make_shared<cg::MaterialNode>();
-    material->set_ambient_and_diffuse(cg::Color4(0.8f, 0.2f, 0.2f, 1.0f));
-    material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
-    material->set_shininess(64.0f);
-
-    // Sphere in front of camera: camera at (0,0,10) looks at (0,0,0)
-    // Put sphere at Z=0 (where camera is looking) with small radius
-    // Smaller radius (0.5) so we can see background around it
-    auto sphere = std::make_shared<cg::RTSphereNode>(cg::Point3(0.0f, 0.0f, 0.0f), 0.5f);
-    material->add_child(std::static_pointer_cast<cg::SceneNode>(sphere));
-    scene_node->add_child(material);
+    // // Red sphere at origin
+    // auto material = std::make_shared<cg::MaterialNode>();
+    // material->set_ambient_and_diffuse(cg::Color4(0.8f, 0.2f, 0.2f, 1.0f));
+    // material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
+    // material->set_shininess(64.0f);
+    // auto sphere = std::make_shared<cg::RTSphereNode>(cg::Point3(0.0f, 0.0f, 0.0f), 0.5f);
+    // material->add_child(std::static_pointer_cast<cg::SceneNode>(sphere));
+    // scene_node->add_child(material);
 
     // Add a floor using a very large sphere (appears nearly flat)
     auto floor_material = std::make_shared<cg::MaterialNode>();
@@ -98,26 +92,190 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     floor_material->add_child(std::static_pointer_cast<cg::SceneNode>(floor));
     scene_node->add_child(floor_material);
 
+    // // Mirror ball (reflective)
     auto mirror_material = std::make_shared<cg::MaterialNode>();
     mirror_material->set_ambient_and_diffuse(cg::Color4(0.1f, 0.1f, 0.1f, 1.0f));
     mirror_material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
     mirror_material->set_shininess(128.0f);
-    mirror_material->set_global_reflectivity(0.8f, 0.8f, 0.8f);  // Highly reflective
-    
+    mirror_material->set_global_reflectivity(0.9f, 0.9f, 0.9f);
     auto mirror_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(-2.0f, 0.0f, 0.0f), 0.5f);
+        cg::Point3(-1.5f, 0.0f, 0.0f), 0.5f);
     mirror_material->add_child(std::static_pointer_cast<cg::SceneNode>(mirror_sphere));
     scene_node->add_child(mirror_material);
 
-    // Add one light source
+    // // Green sphere
+    // auto green_material = std::make_shared<cg::MaterialNode>();
+    // green_material->set_ambient_and_diffuse(cg::Color4(0.2f, 0.8f, 0.2f, 1.0f));
+    // green_material->set_specular(cg::Color4(0.5f, 0.5f, 0.5f, 1.0f));
+    // green_material->set_shininess(32.0f);
+    // auto green_sphere = std::make_shared<cg::RTSphereNode>(
+    //     cg::Point3(1.5f, 0.0f, 3.0f), 0.4f);
+    // green_material->add_child(std::static_pointer_cast<cg::SceneNode>(green_sphere));
+    // scene_node->add_child(green_material);
+
+    // // Glass ball (transparent/refractive)
+    // auto glass_material = std::make_shared<cg::MaterialNode>();
+    // glass_material->set_ambient_and_diffuse(cg::Color4(0.1f, 0.1f, 0.15f, 1.0f));
+    // glass_material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
+    // glass_material->set_shininess(128.0f);
+    // glass_material->set_global_transmission(0.95f, 0.95f, 0.95f);
+    // glass_material->set_index_of_refraction(1.0f);
+    // auto glass_sphere = std::make_shared<cg::RTSphereNode>(
+    //     cg::Point3(1.2f, 0.0f, 0.0f), 0.5f);
+    // glass_material->add_child(std::static_pointer_cast<cg::SceneNode>(glass_sphere));
+    // scene_node->add_child(glass_material);
+
+    // ========== PLANAR SURFACES (2 walls) ==========
+
+    // Back wall (blue-ish)
+    auto back_wall_material = std::make_shared<cg::MaterialNode>();
+    back_wall_material->set_ambient_and_diffuse(cg::Color4(0.3f, 0.3f, 0.6f, 1.0f));
+    back_wall_material->set_specular(cg::Color4(0.2f, 0.2f, 0.2f, 1.0f));
+    back_wall_material->set_shininess(8.0f);
+
+    auto back_wall = std::make_shared<cg::RTQuadNode>(
+        cg::Point3(5.0f, -1.0f, 8.0f),    // bottom-right
+        cg::Point3(-5.0f, -1.0f, 8.0f),   // bottom-left
+        cg::Point3(-5.0f, 4.0f, 8.0f),    // top-left
+        cg::Point3(5.0f, 4.0f, 8.0f));    // top-right (reversed for normal toward -Z)
+    back_wall_material->add_child(std::static_pointer_cast<cg::SceneNode>(back_wall));
+    scene_node->add_child(back_wall_material);
+
+    // Left wall (tan/beige)
+    auto left_wall_material = std::make_shared<cg::MaterialNode>();
+    left_wall_material->set_ambient_and_diffuse(cg::Color4(0.6f, 0.5f, 0.4f, 1.0f));
+    left_wall_material->set_specular(cg::Color4(0.2f, 0.2f, 0.2f, 1.0f));
+    left_wall_material->set_shininess(8.0f);
+
+    auto left_wall = std::make_shared<cg::RTQuadNode>(
+        cg::Point3(-5.0f, -1.0f, 8.0f),   // bottom-back
+        cg::Point3(-5.0f, -1.0f, -2.0f),  // bottom-front
+        cg::Point3(-5.0f, 4.0f, -2.0f),   // top-front
+        cg::Point3(-5.0f, 4.0f, 8.0f));   // top-back (reversed for normal toward +X)
+    left_wall_material->add_child(std::static_pointer_cast<cg::SceneNode>(left_wall));
+    scene_node->add_child(left_wall_material);
+
+    // ========== TRIANGLE MESH OBJECTS (3 meshes) ==========
+
+    // Pyramid vertices (shared across faces)
+    cg::Point3 pv0(-3.0f, -1.0f, 2.0f);   // base front-left
+    cg::Point3 pv1(-2.0f, -1.0f, 2.0f);   // base front-right
+    cg::Point3 pv2(-2.0f, -1.0f, 3.0f);   // base back-right
+    cg::Point3 pv3(-3.0f, -1.0f, 3.0f);   // base back-left
+    cg::Point3 pv4(-2.5f, 0.5f, 2.5f);    // apex
+
+    // Front face (facing -Z) - RED
+    auto front_mat = std::make_shared<cg::MaterialNode>();
+    front_mat->set_ambient_and_diffuse(cg::Color4(1.0f, 0.0f, 0.0f, 1.0f));
+    front_mat->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
+    front_mat->set_shininess(16.0f);
+    auto front_face = std::make_shared<cg::RTMeshNode>(
+        std::vector<cg::Point3>{pv1, pv0, pv4},
+        std::vector<uint16_t>{0, 1, 2});
+    front_mat->add_child(front_face);
+    scene_node->add_child(front_mat);
+
+    // Right face (facing +X) - GREEN
+    auto right_mat = std::make_shared<cg::MaterialNode>();
+    right_mat->set_ambient_and_diffuse(cg::Color4(0.0f, 1.0f, 0.0f, 1.0f));
+    right_mat->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
+    right_mat->set_shininess(16.0f);
+    auto right_face = std::make_shared<cg::RTMeshNode>(
+        std::vector<cg::Point3>{pv2, pv1, pv4},
+        std::vector<uint16_t>{0, 1, 2});
+    right_mat->add_child(right_face);
+    scene_node->add_child(right_mat);
+
+    // Back face (facing +Z) - BLUE
+    auto back_mat = std::make_shared<cg::MaterialNode>();
+    back_mat->set_ambient_and_diffuse(cg::Color4(0.0f, 0.0f, 1.0f, 1.0f));
+    back_mat->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
+    back_mat->set_shininess(16.0f);
+    auto back_face = std::make_shared<cg::RTMeshNode>(
+        std::vector<cg::Point3>{pv3, pv2, pv4},
+        std::vector<uint16_t>{0, 1, 2});
+    back_mat->add_child(back_face);
+    scene_node->add_child(back_mat);
+
+    // Left face (facing -X) - YELLOW
+    auto left_mat = std::make_shared<cg::MaterialNode>();
+    left_mat->set_ambient_and_diffuse(cg::Color4(1.0f, 1.0f, 0.0f, 1.0f));
+    left_mat->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
+    left_mat->set_shininess(16.0f);
+    auto left_face = std::make_shared<cg::RTMeshNode>(
+        std::vector<cg::Point3>{pv0, pv3, pv4},
+        std::vector<uint16_t>{0, 1, 2});
+    left_mat->add_child(left_face);
+    scene_node->add_child(left_mat);
+
+    // // Mesh 2: Simple box/cube (cyan) - reflective
+    // auto box_material = std::make_shared<cg::MaterialNode>();
+    // box_material->set_ambient_and_diffuse(cg::Color4(0.1f, 0.5f, 0.5f, 1.0f));
+    // box_material->set_specular(cg::Color4(0.8f, 0.8f, 0.8f, 1.0f));
+    // box_material->set_shininess(64.0f);
+    // box_material->set_global_reflectivity(0.3f, 0.3f, 0.3f);
+    // float bx = 2.5f, by = -1.0f, bz = 4.0f;
+    // float bs = 0.8f;
+    // std::vector<cg::Point3> box_verts = {
+    //     cg::Point3(bx, by, bz),
+    //     cg::Point3(bx + bs, by, bz),
+    //     cg::Point3(bx + bs, by + bs, bz),
+    //     cg::Point3(bx, by + bs, bz),
+    //     cg::Point3(bx, by, bz + bs),
+    //     cg::Point3(bx + bs, by, bz + bs),
+    //     cg::Point3(bx + bs, by + bs, bz + bs),
+    //     cg::Point3(bx, by + bs, bz + bs)
+    // };
+    // std::vector<uint16_t> box_faces = {
+    //     0, 1, 2,  0, 2, 3,
+    //     5, 4, 7,  5, 7, 6,
+    //     4, 0, 3,  4, 3, 7,
+    //     1, 5, 6,  1, 6, 2,
+    //     3, 2, 6,  3, 6, 7,
+    //     4, 5, 1,  4, 1, 0
+    // };
+    // auto box_mesh = std::make_shared<cg::RTMeshNode>(box_verts, box_faces);
+    // box_material->add_child(std::static_pointer_cast<cg::SceneNode>(box_mesh));
+    // scene_node->add_child(box_material);
+
+    // Mesh 3: Simple wedge/ramp (purple)
+    auto wedge_material = std::make_shared<cg::MaterialNode>();
+    wedge_material->set_ambient_and_diffuse(cg::Color4(0.6f, 0.2f, 0.6f, 1.0f));
+    wedge_material->set_specular(cg::Color4(0.4f, 0.4f, 0.4f, 1.0f));
+    wedge_material->set_shininess(16.0f);
+
+    std::vector<cg::Point3> wedge_verts = {
+        cg::Point3(-4.0f, -1.0f, 5.0f),   // 0 front-left bottom
+        cg::Point3(-3.0f, -1.0f, 5.0f),   // 1 front-right bottom
+        cg::Point3(-3.0f, -1.0f, 7.0f),   // 2 back-right bottom
+        cg::Point3(-4.0f, -1.0f, 7.0f),   // 3 back-left bottom
+        cg::Point3(-4.0f, 0.0f, 7.0f),    // 4 back-left top
+        cg::Point3(-3.0f, 0.0f, 7.0f)     // 5 back-right top
+    };
+    std::vector<uint16_t> wedge_faces = {
+        // Bottom (facing -Y, CCW from below)
+        0, 1, 2,  0, 2, 3,
+        // Back vertical face (facing +Z, CCW from back)
+        2, 5, 4,  2, 4, 3,
+        // Slope face (facing -Z/+Y, CCW from front-above)
+        1, 0, 4,  1, 4, 5,
+        // Left triangle (facing -X, CCW from left)
+        3, 4, 0,
+        // Right triangle (facing +X, CCW from right)
+        1, 5, 2
+    };
+    auto wedge_mesh = std::make_shared<cg::RTMeshNode>(wedge_verts, wedge_faces);
+    wedge_material->add_child(std::static_pointer_cast<cg::SceneNode>(wedge_mesh));
+    scene_node->add_child(wedge_material);
+
+    // Single strong directional light - positioned high and at an angle
+    // so each face of pyramid/wedge receives different illumination
     auto light = std::make_shared<cg::LightNode>(0);
-    light->set_position(cg::HPoint3(5.0f, 5.0f, 10.0f, 1.0f));
-    light->set_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
+    light->set_position(cg::HPoint3(4.0f, 6.0f, -1.0f, 1.0f));  // High, front-right
+    light->set_diffuse(cg::Color4(1.2f, 1.2f, 1.1f, 1.0f));     // Strong white light (>1 for intensity)
     light->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
     light->enable();
     scene_node->add_child(light);
-
-    // Store light pointer for ray tracer
     g_lights.push_back(light.get());
 
     return scene_node;
