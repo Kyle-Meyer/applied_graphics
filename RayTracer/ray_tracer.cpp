@@ -1,4 +1,5 @@
 #include "RayTracer/ray_tracer.hpp"
+#include "RayTracer/procedural_texture.hpp"
 
 #include "geometry/geometry.hpp"
 
@@ -84,8 +85,21 @@ Color3 RayTracer::trace_ray(Ray &ray)
         }
     }
 
-    // TODO: Get the texture color if the intersected object has a texture
-    // and modulate the color
+    // Get the texture color if the intersected object has a texture and modulate
+    if (closest.texture_node != nullptr)
+    {
+        // Check if it's a procedural texture
+        if (closest.texture_node->node_type() == SceneNodeType::PROCEDURAL_TEXTURE)
+        {
+            ProceduralTexture* proc_tex = static_cast<ProceduralTexture*>(closest.texture_node);
+            Color3 tex_color = proc_tex->get_color(int_pt);
+            // Modulate the color (multiply)
+            color.r *= tex_color.r;
+            color.g *= tex_color.g;
+            color.b *= tex_color.b;
+        }
+        // TODO: Handle IMAGE_TEXTURE case using texture coordinates
+    }
 
     // TODO: Return if max depth is reached or attenuation is below threshold
     // (do not spawn additional rays)

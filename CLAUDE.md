@@ -7,7 +7,7 @@
 - Reflection (mirror spheres working)
 - Refraction (implemented, but solid glass spheres act as ball lenses - physically correct but may look "reflective" due to image inversion)
 
-**Test scene:** Red sphere, mirror sphere, glass sphere, green sphere (behind glass), gray floor, one light source.
+**Test scene:** Red sphere, mirror sphere, glass sphere, green sphere (behind glass), checkered floor, one light source.
 
 ---
 
@@ -82,7 +82,7 @@ Complete for ray tracing. If a ray does not intersect the BV, sub-tree intersect
 - [x] At least 1 semi-transparent object with refraction
 
 #### Texturing
-- [ ] Procedural texture on 1 object (checkerboard, brick, or wood grain)
+- [x] Procedural texture on 1 object (checkerboard on floor)
 - [ ] Image texture on at least 1 object (use barycentric coordinates)
 
 #### Optimization
@@ -109,7 +109,7 @@ Spheres:
 - Mirror sphere at (-1.5, 0, 0) (radius 0.5) - reflective
 - Glass sphere at (1.2, 0, 0) (radius 0.5) - transparent
 - Green sphere at (1.5, 0, 3) (radius 0.4) - behind glass
-- Floor: large sphere (radius 1000, center at y=-1001)
+- Floor: large sphere (radius 1000, center at y=-1001) - checkered texture
 
 Planar Surfaces (RTQuadNode):
 - Back wall (blue) at z=8
