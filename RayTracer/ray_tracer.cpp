@@ -1,5 +1,5 @@
 #include "RayTracer/ray_tracer.hpp"
-#include "RayTracer/procedural_texture.hpp"
+#include "RayTracer/texture_node.hpp"
 
 #include "geometry/geometry.hpp"
 
@@ -29,10 +29,12 @@ Color3 RayTracer::trace_ray(Ray &ray)
 {
     // Traverse the scene graph to find closest intersecting object
     SceneState current_state;
+    current_state.texture_node = nullptr;
     SceneState closest;
     closest.t_min = 1e30f;  // Initialize to very large value
     closest.geometry_node = nullptr;
     closest.material_node = nullptr;
+    closest.texture_node = nullptr;
 
     scene_root_->find_closest_intersect(ray, current_state, closest);
 
@@ -85,23 +87,29 @@ Color3 RayTracer::trace_ray(Ray &ray)
         }
     }
 
-    // Get the texture color if the intersected object has a texture and modulate
-    if (closest.texture_node != nullptr)
+    // Get texture color if the intersected object has a texture and modulate
+    if (closest.texture_node)
     {
-        // Check if it's a procedural texture
-        if (closest.texture_node->node_type() == SceneNodeType::PROCEDURAL_TEXTURE)
+        TextureNode *texture = static_cast<TextureNode *>(closest.texture_node);
+
+        // Try procedural (world-space) first
+        Color3 tex_color = texture->get_color(int_pt);
+
+        // If procedural returns black, try UV-based texture coordinates
+        if (tex_color.r == 0.0f && tex_color.g == 0.0f && tex_color.b == 0.0f)
         {
-            ProceduralTexture* proc_tex = static_cast<ProceduralTexture*>(closest.texture_node);
-            Color3 tex_color = proc_tex->get_color(int_pt);
-            // Modulate the color (multiply)
-            color.r *= tex_color.r;
-            color.g *= tex_color.g;
-            color.b *= tex_color.b;
+            Point2 tex_pt = nearest_object->get_texture_coord(int_pt);
+            TextureCoord2 tex_coord(tex_pt.x, tex_pt.y);
+            tex_color = texture->get_color(tex_coord);
         }
-        // TODO: Handle IMAGE_TEXTURE case using texture coordinates
+
+        // Modulate color by texture (multiply)
+        color.r *= tex_color.r;
+        color.g *= tex_color.g;
+        color.b *= tex_color.b;
     }
 
-    // TODO: Return if max depth is reached or attenuation is below threshold
+    // Return if max depth is reached or attenuation is below threshold
     // (do not spawn additional rays)
     if(ray.recursion_level_ <= 0 || ray.below_threshold())
     {

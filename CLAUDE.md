@@ -1,13 +1,15 @@
 # Applied Graphics - Ray Tracing Assignment
 
-## Current Status (Updated Feb 1, 2026)
+## Current Status (Updated Feb 3, 2026)
 
 **Working:**
 - Basic ray tracing with Phong-Blinn lighting and shadows
 - Reflection (mirror spheres working)
 - Refraction (implemented, but solid glass spheres act as ball lenses - physically correct but may look "reflective" due to image inversion)
+- Procedural texturing (checkerboard on floor via FunctionalTexture)
+- Image texturing (floor_tiles.jpg on back wall via ImageTexture)
 
-**Test scene:** Red sphere, mirror sphere, glass sphere, green sphere (behind glass), checkered floor, one light source.
+**Test scene:** Red sphere, mirror sphere, glass sphere, green sphere, checkered floor, textured back wall, one light source.
 
 ---
 
@@ -32,7 +34,7 @@ Base class has default implementations. RTSphereNode provides proper overrides:
 
 Complete for ray tracing. If a ray does not intersect the BV, sub-tree intersection tests are skipped.
 
-### 4. RayTracer/ray_tracer.* - MOSTLY COMPLETE
+### 4. RayTracer/ray_tracer.* - COMPLETE ✓
 
 **Completed:**
 - `add_light()` - register lights with ray tracer
@@ -40,15 +42,11 @@ Complete for ray tracing. If a ray does not intersect the BV, sub-tree intersect
 - `trace_ray()`:
   - Finds closest intersection
   - Computes ambient + emission + diffuse + specular
+  - Gets texture color and modulates (procedural or UV-based)
   - Spawns reflected rays for reflective materials
   - Spawns refracted rays for transparent materials
   - Handles total internal reflection
-
-**Still TODO:**
-- [ ] Get texture color from intersected object and modulate
-- [x] Check max depth / attenuation threshold before spawning rays
-- [x] Spawn reflected ray if material is reflective
-- [x] Spawn transmitted ray if material is transparent
+  - Checks max depth / attenuation threshold before spawning rays
 
 ### 5. RayTracer/ray.* - COMPLETE ✓
 - `get_refracted_ray()` - computes refracted ray using Snell's law, handles TIR
@@ -82,8 +80,8 @@ Complete for ray tracing. If a ray does not intersect the BV, sub-tree intersect
 - [x] At least 1 semi-transparent object with refraction
 
 #### Texturing
-- [x] Procedural texture on 1 object (checkerboard on floor)
-- [ ] Image texture on at least 1 object (use barycentric coordinates)
+- [x] Procedural texture on 1 object (checkerboard on floor via FunctionalTexture)
+- [x] Image texture on at least 1 object (floor_tiles.jpg on back wall via ImageTexture)
 
 #### Optimization
 - [x] Adaptive depth testing (recursion level check implemented)
@@ -112,7 +110,7 @@ Spheres:
 - Floor: large sphere (radius 1000, center at y=-1001) - checkered texture
 
 Planar Surfaces (RTQuadNode):
-- Back wall (blue) at z=8
+- Back wall at z=8 - image texture (floor_tiles.jpg)
 - Left wall (tan) at x=-5
 
 Triangle Meshes (RTMeshNode with AABB):
@@ -131,17 +129,39 @@ Triangle Meshes (RTMeshNode with AABB):
 
 ---
 
-## Files Modified This Session
+## Files Modified
 
 - `geometry/ray3.cpp` - Added `refract()` implementation
 - `RayTracer/ray.cpp` - Added `get_refracted_ray()` implementation
-- `RayTracer/ray_tracer.cpp` - Added reflection and refraction in `trace_ray()`
-- `RayTracer/main.cpp` - Test scene with spheres, walls, and meshes
+- `RayTracer/ray_tracer.cpp` - Added reflection, refraction, and texture color modulation in `trace_ray()`
+- `RayTracer/main.cpp` - Test scene with spheres, walls, meshes, and textures
 - `geometry/geometry.hpp` - Increased EPSILON to 0.0001
 
-## Files Created This Session
+## Files Created
 
 - `RayTracer/rt_quad_node.hpp` - Quadrilateral (planar surface) ray tracing node
 - `RayTracer/rt_quad_node.cpp` - Implementation using 2-triangle intersection
 - `RayTracer/rt_mesh_node.hpp` - Triangle mesh ray tracing node with AABB
 - `RayTracer/rt_mesh_node.cpp` - Implementation with AABB culling and barycentric interpolation
+- `RayTracer/functional_texture.hpp` - Function-based procedural texture class
+- `RayTracer/functional_texture.cpp` - Implementation with static factory methods (checkerboard, stripes, gradient)
+
+## Texturing Architecture
+
+**Scene graph structure for textured objects:**
+```
+MaterialNode → TextureNode → GeometryNode
+```
+
+**FunctionalTexture** - Flexible procedural texture using lambdas:
+- `get_color(Point3)` - world-space procedural patterns
+- `get_color(TextureCoord2)` - UV-based patterns
+- Static factories: `checkerboard()`, `stripes()`, `gradient()`
+- Easy to extend with custom patterns via lambda
+
+**ImageTexture** (existing) - Loads image files with bilinear filtering
+
+**Texture lookup in ray_tracer.cpp:**
+1. Tries procedural (world-space) first
+2. Falls back to UV-based if procedural returns black
+3. Modulates computed color by texture color

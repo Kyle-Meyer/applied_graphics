@@ -17,13 +17,14 @@
 #include "scene/scene.hpp"
 
 #include "RayTracer/framebuffer.hpp"
+#include "RayTracer/functional_texture.hpp"
+#include "RayTracer/image_texture.hpp"
 #include "RayTracer/lighting.hpp"
 #include "RayTracer/material_node.hpp"
 #include "RayTracer/ray_tracer.hpp"
 #include "RayTracer/rt_sphere_node.hpp"
 #include "RayTracer/rt_quad_node.hpp"
 #include "RayTracer/rt_mesh_node.hpp"
-#include "RayTracer/checkerboard_texture.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -82,24 +83,23 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     scene_node->add_child(material);
 
     // Add a floor using a very large sphere (appears nearly flat) with checkerboard texture
-    auto floor_texture = std::make_shared<cg::CheckerboardTexture>(
-        cg::Color3(0.9f, 0.9f, 0.9f),   // Light gray
-        cg::Color3(0.2f, 0.2f, 0.3f),   // Dark blue-gray
-        1.0f);                           // Scale (1 unit squares)
-
     auto floor_material = std::make_shared<cg::MaterialNode>();
-    floor_material->set_ambient_and_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));  // White base (texture will modulate)
+    floor_material->set_ambient_and_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));  // White base for texture
     floor_material->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
     floor_material->set_shininess(16.0f);
+
+    // Procedural checkerboard texture using FunctionalTexture
+    auto floor_texture = cg::FunctionalTexture::checkerboard(
+        cg::Color3(0.9f, 0.9f, 0.9f),   // Light gray
+        cg::Color3(0.2f, 0.2f, 0.2f),   // Dark gray
+        1.0f);                           // Scale
 
     // Large sphere with center far below, surface at y = -1
     // Radius 1000, center at (0, -1001, 0) puts the top of the sphere at y = -1
     auto floor = std::make_shared<cg::RTSphereNode>(cg::Point3(0.0f, -1001.0f, 0.0f), 1000.0f);
-
-    // Scene graph: texture -> material -> geometry
-    floor_material->add_child(std::static_pointer_cast<cg::SceneNode>(floor));
-    floor_texture->add_child(std::static_pointer_cast<cg::SceneNode>(floor_material));
-    scene_node->add_child(floor_texture);
+    floor_texture->add_child(floor);
+    floor_material->add_child(floor_texture);
+    scene_node->add_child(floor_material);
 
     // // Mirror ball (reflective)
     auto mirror_material = std::make_shared<cg::MaterialNode>();
@@ -128,7 +128,7 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     glass_material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
     glass_material->set_shininess(128.0f);
     glass_material->set_global_transmission(0.95f, 0.95f, 0.95f);
-    glass_material->set_index_of_refraction(1.026f);
+    glass_material->set_index_of_refraction(.83f);
     auto glass_sphere = std::make_shared<cg::RTSphereNode>(
         cg::Point3(1.2f, 0.0f, 0.0f), 0.5f);
     glass_material->add_child(std::static_pointer_cast<cg::SceneNode>(glass_sphere));
@@ -136,18 +136,22 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
 
     // ========== PLANAR SURFACES (2 walls) ==========
 
-    // Back wall (blue-ish)
+    // Back wall with image texture
     auto back_wall_material = std::make_shared<cg::MaterialNode>();
-    back_wall_material->set_ambient_and_diffuse(cg::Color4(0.3f, 0.3f, 0.6f, 1.0f));
+    back_wall_material->set_ambient_and_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));  // White base for texture
     back_wall_material->set_specular(cg::Color4(0.2f, 0.2f, 0.2f, 1.0f));
     back_wall_material->set_shininess(8.0f);
+
+    // Image texture from textures/ directory
+    auto wall_texture = std::make_shared<cg::ImageTexture>("floor_tiles.jpg");
 
     auto back_wall = std::make_shared<cg::RTQuadNode>(
         cg::Point3(5.0f, -1.0f, 8.0f),    // bottom-right
         cg::Point3(-5.0f, -1.0f, 8.0f),   // bottom-left
         cg::Point3(-5.0f, 4.0f, 8.0f),    // top-left
         cg::Point3(5.0f, 4.0f, 8.0f));    // top-right (reversed for normal toward -Z)
-    back_wall_material->add_child(std::static_pointer_cast<cg::SceneNode>(back_wall));
+    wall_texture->add_child(back_wall);
+    back_wall_material->add_child(wall_texture);
     scene_node->add_child(back_wall_material);
 
     // Left wall (tan/beige)
