@@ -25,6 +25,8 @@
 #include "RayTracer/rt_sphere_node.hpp"
 #include "RayTracer/rt_quad_node.hpp"
 #include "RayTracer/rt_mesh_node.hpp"
+#include "RayTracer/rt_transform_node.hpp"
+#include "scene/bounding_aabb_node.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -73,12 +75,12 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     // 605.767 - Student to define. Create a scene graph to describe your scene
     auto scene_node = std::make_shared<cg::SceneNode>();
 
-    // Red sphere at origin
+    // Red sphere (moved left to reveal mesh objects)
     auto material = std::make_shared<cg::MaterialNode>();
     material->set_ambient_and_diffuse(cg::Color4(0.8f, 0.2f, 0.2f, 1.0f));
     material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
     material->set_shininess(64.0f);
-    auto sphere = std::make_shared<cg::RTSphereNode>(cg::Point3(0.0f, 0.0f, 0.0f), 0.5f);
+    auto sphere = std::make_shared<cg::RTSphereNode>(cg::Point3(-1.5f, 0.0f, 0.0f), 0.5f);
     material->add_child(std::static_pointer_cast<cg::SceneNode>(sphere));
     scene_node->add_child(material);
 
@@ -101,28 +103,28 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     floor_material->add_child(floor_texture);
     scene_node->add_child(floor_material);
 
-    // // Mirror ball (reflective)
+    // Mirror ball (reflective, moved left)
     auto mirror_material = std::make_shared<cg::MaterialNode>();
     mirror_material->set_ambient_and_diffuse(cg::Color4(0.1f, 0.1f, 0.1f, 1.0f));
     mirror_material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
     mirror_material->set_shininess(128.0f);
     mirror_material->set_global_reflectivity(0.9f, 0.9f, 0.9f);
     auto mirror_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(-1.5f, 0.0f, 0.0f), 0.5f);
+        cg::Point3(-3.0f, 0.0f, 0.0f), 0.5f);
     mirror_material->add_child(std::static_pointer_cast<cg::SceneNode>(mirror_sphere));
     scene_node->add_child(mirror_material);
 
-    // Green sphere (behind glass)
+    // Green sphere (behind glass, moved left)
     auto green_material = std::make_shared<cg::MaterialNode>();
     green_material->set_ambient_and_diffuse(cg::Color4(0.2f, 0.8f, 0.2f, 1.0f));
     green_material->set_specular(cg::Color4(0.5f, 0.5f, 0.5f, 1.0f));
     green_material->set_shininess(32.0f);
     auto green_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(1.5f, 0.0f, 3.0f), 0.4f);
+        cg::Point3(0.0f, 0.0f, 3.0f), 0.4f);
     green_material->add_child(std::static_pointer_cast<cg::SceneNode>(green_sphere));
     scene_node->add_child(green_material);
 
-    // Glass ball (transparent/refractive)
+    // Glass ball (transparent/refractive, moved left)
     auto glass_material = std::make_shared<cg::MaterialNode>();
     glass_material->set_ambient_and_diffuse(cg::Color4(0.1f, 0.1f, 0.15f, 1.0f));
     glass_material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
@@ -130,7 +132,7 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     glass_material->set_global_transmission(0.95f, 0.95f, 0.95f);
     glass_material->set_index_of_refraction(.83f);
     auto glass_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(1.2f, 0.0f, 0.0f), 0.5f);
+        cg::Point3(-0.3f, 0.0f, 0.0f), 0.5f);
     glass_material->add_child(std::static_pointer_cast<cg::SceneNode>(glass_sphere));
     scene_node->add_child(glass_material);
 
@@ -168,20 +170,30 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     left_wall_material->add_child(std::static_pointer_cast<cg::SceneNode>(left_wall));
     scene_node->add_child(left_wall_material);
 
-    // ========== TRIANGLE MESH OBJECTS (3 meshes) ==========
+    // ========== TRIANGLE MESH OBJECTS (3 meshes with transforms) ==========
+    // All meshes are wrapped in a parent AABBNode for hierarchical culling
 
-    // Mesh 1: Yellow pyramid
+    // Create parent bounding box that encompasses all mesh objects
+    // Bounds calculated from world-space positions of all three meshes
+    auto mesh_bounding_box = std::make_shared<cg::AABBNode>();
+    mesh_bounding_box->set(
+        cg::Point3(-5.0f, -1.5f, 1.0f),   // min corner
+        cg::Point3(4.0f, 1.0f, 8.0f)      // max corner
+    );
+
+    // Mesh 1: Yellow pyramid - defined at origin, transformed to position
     auto pyramid_material = std::make_shared<cg::MaterialNode>();
     pyramid_material->set_ambient_and_diffuse(cg::Color4(0.9f, 0.8f, 0.1f, 1.0f));
     pyramid_material->set_specular(cg::Color4(0.4f, 0.4f, 0.4f, 1.0f));
     pyramid_material->set_shininess(32.0f);
 
+    // Unit pyramid centered at origin with base at y=0 and apex at y=1
     std::vector<cg::Point3> pyramid_verts = {
-        cg::Point3(-3.0f, -1.0f, 2.0f),   // 0: base front-left
-        cg::Point3(-2.0f, -1.0f, 2.0f),   // 1: base front-right
-        cg::Point3(-2.0f, -1.0f, 3.0f),   // 2: base back-right
-        cg::Point3(-3.0f, -1.0f, 3.0f),   // 3: base back-left
-        cg::Point3(-2.5f, 0.5f, 2.5f)     // 4: apex
+        cg::Point3(-0.5f, 0.0f, -0.5f),   // 0: base front-left
+        cg::Point3( 0.5f, 0.0f, -0.5f),   // 1: base front-right
+        cg::Point3( 0.5f, 0.0f,  0.5f),   // 2: base back-right
+        cg::Point3(-0.5f, 0.0f,  0.5f),   // 3: base back-left
+        cg::Point3( 0.0f, 1.0f,  0.0f)    // 4: apex
     };
     std::vector<uint16_t> pyramid_faces = {
         // 4 triangular sides (CCW winding for outward normals)
@@ -193,52 +205,67 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
         0, 1, 2,  0, 2, 3
     };
     auto pyramid_mesh = std::make_shared<cg::RTMeshNode>(pyramid_verts, pyramid_faces);
-    pyramid_material->add_child(std::static_pointer_cast<cg::SceneNode>(pyramid_mesh));
-    scene_node->add_child(pyramid_material);
 
-    // Mesh 2: Simple box/cube (cyan) - reflective
+    // Transform: scale by 1.5, rotate 15 degrees, translate to (-2.5, -1, 2.5)
+    auto pyramid_transform = std::make_shared<cg::RTTransformNode>();
+    pyramid_transform->translate(-2.5f, -1.0f, 2.5f);
+    pyramid_transform->rotate_y(15.0f);
+    pyramid_transform->scale(1.5f, 1.5f, 1.5f);
+    pyramid_transform->add_child(pyramid_mesh);
+    pyramid_material->add_child(pyramid_transform);
+    mesh_bounding_box->add_child(pyramid_material);  // Add to bounding box instead of scene
+
+    // Mesh 2: Cyan box/cube - reflective, defined at origin, transformed to position
     auto box_material = std::make_shared<cg::MaterialNode>();
     box_material->set_ambient_and_diffuse(cg::Color4(0.1f, 0.5f, 0.5f, 1.0f));
     box_material->set_specular(cg::Color4(0.8f, 0.8f, 0.8f, 1.0f));
     box_material->set_shininess(64.0f);
     box_material->set_global_reflectivity(0.3f, 0.3f, 0.3f);
-    float bx = 2.5f, by = -1.0f, bz = 4.0f;
-    float bs = 0.8f;
+
+    // Unit cube centered at origin from -0.5 to 0.5
     std::vector<cg::Point3> box_verts = {
-        cg::Point3(bx, by, bz),
-        cg::Point3(bx + bs, by, bz),
-        cg::Point3(bx + bs, by + bs, bz),
-        cg::Point3(bx, by + bs, bz),
-        cg::Point3(bx, by, bz + bs),
-        cg::Point3(bx + bs, by, bz + bs),
-        cg::Point3(bx + bs, by + bs, bz + bs),
-        cg::Point3(bx, by + bs, bz + bs)
+        cg::Point3(-0.5f, -0.5f, -0.5f),  // 0: front-bottom-left
+        cg::Point3( 0.5f, -0.5f, -0.5f),  // 1: front-bottom-right
+        cg::Point3( 0.5f,  0.5f, -0.5f),  // 2: front-top-right
+        cg::Point3(-0.5f,  0.5f, -0.5f),  // 3: front-top-left
+        cg::Point3(-0.5f, -0.5f,  0.5f),  // 4: back-bottom-left
+        cg::Point3( 0.5f, -0.5f,  0.5f),  // 5: back-bottom-right
+        cg::Point3( 0.5f,  0.5f,  0.5f),  // 6: back-top-right
+        cg::Point3(-0.5f,  0.5f,  0.5f)   // 7: back-top-left
     };
     std::vector<uint16_t> box_faces = {
-        0, 1, 2,  0, 2, 3,
-        5, 4, 7,  5, 7, 6,
-        4, 0, 3,  4, 3, 7,
-        1, 5, 6,  1, 6, 2,
-        3, 2, 6,  3, 6, 7,
-        4, 5, 1,  4, 1, 0
+        0, 1, 2,  0, 2, 3,  // front
+        5, 4, 7,  5, 7, 6,  // back
+        4, 0, 3,  4, 3, 7,  // left
+        1, 5, 6,  1, 6, 2,  // right
+        3, 2, 6,  3, 6, 7,  // top
+        4, 5, 1,  4, 1, 0   // bottom
     };
     auto box_mesh = std::make_shared<cg::RTMeshNode>(box_verts, box_faces);
-    box_material->add_child(std::static_pointer_cast<cg::SceneNode>(box_mesh));
-    scene_node->add_child(box_material);
 
-    // Mesh 3: Simple wedge/ramp (purple)
+    // Transform: scale to 0.8, rotate 30 degrees, translate to (2.9, -0.6, 4.4)
+    auto box_transform = std::make_shared<cg::RTTransformNode>();
+    box_transform->translate(2.9f, -0.6f, 4.4f);
+    box_transform->rotate_y(30.0f);
+    box_transform->scale(0.8f, 0.8f, 0.8f);
+    box_transform->add_child(box_mesh);
+    box_material->add_child(box_transform);
+    mesh_bounding_box->add_child(box_material);  // Add to bounding box instead of scene
+
+    // Mesh 3: Purple wedge/ramp - defined at origin, transformed to position
     auto wedge_material = std::make_shared<cg::MaterialNode>();
     wedge_material->set_ambient_and_diffuse(cg::Color4(0.6f, 0.2f, 0.6f, 1.0f));
     wedge_material->set_specular(cg::Color4(0.4f, 0.4f, 0.4f, 1.0f));
     wedge_material->set_shininess(16.0f);
 
+    // Unit wedge: base from -0.5 to 0.5 in x/z, height 1, slope from front to back
     std::vector<cg::Point3> wedge_verts = {
-        cg::Point3(-4.0f, -1.0f, 5.0f),   // 0 front-left bottom
-        cg::Point3(-3.0f, -1.0f, 5.0f),   // 1 front-right bottom
-        cg::Point3(-3.0f, -1.0f, 7.0f),   // 2 back-right bottom
-        cg::Point3(-4.0f, -1.0f, 7.0f),   // 3 back-left bottom
-        cg::Point3(-4.0f, 0.0f, 7.0f),    // 4 back-left top
-        cg::Point3(-3.0f, 0.0f, 7.0f)     // 5 back-right top
+        cg::Point3(-0.5f, 0.0f, -0.5f),   // 0 front-left bottom
+        cg::Point3( 0.5f, 0.0f, -0.5f),   // 1 front-right bottom
+        cg::Point3( 0.5f, 0.0f,  0.5f),   // 2 back-right bottom
+        cg::Point3(-0.5f, 0.0f,  0.5f),   // 3 back-left bottom
+        cg::Point3(-0.5f, 1.0f,  0.5f),   // 4 back-left top
+        cg::Point3( 0.5f, 1.0f,  0.5f)    // 5 back-right top
     };
     std::vector<uint16_t> wedge_faces = {
         // Bottom (facing -Y, CCW from below)
@@ -253,8 +280,18 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
         1, 5, 2
     };
     auto wedge_mesh = std::make_shared<cg::RTMeshNode>(wedge_verts, wedge_faces);
-    wedge_material->add_child(std::static_pointer_cast<cg::SceneNode>(wedge_mesh));
-    scene_node->add_child(wedge_material);
+
+    // Transform: scale by (1, 1, 2), rotate -20 degrees, translate to (-3.5, -1, 6)
+    auto wedge_transform = std::make_shared<cg::RTTransformNode>();
+    wedge_transform->translate(-3.5f, -1.0f, 6.0f);
+    wedge_transform->rotate_y(-20.0f);
+    wedge_transform->scale(1.0f, 1.0f, 2.0f);
+    wedge_transform->add_child(wedge_mesh);
+    wedge_material->add_child(wedge_transform);
+    mesh_bounding_box->add_child(wedge_material);  // Add to bounding box instead of scene
+
+    // Add the bounding box (containing all meshes) to the scene
+    scene_node->add_child(mesh_bounding_box);
 
     // Single strong directional light - positioned high and at an angle
     // so each face of pyramid/wedge receives different illumination
@@ -551,6 +588,10 @@ int main(int argc, char **argv)
 
     // Main loop
     cg::EventType event_result = cg::EventType::NONE;
+
+    // Flush any pending events (e.g., window resize on startup) before initial render
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {}
 
     // Trigger initial render
     display();

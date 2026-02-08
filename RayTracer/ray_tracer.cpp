@@ -30,11 +30,16 @@ Color3 RayTracer::trace_ray(Ray &ray)
     // Traverse the scene graph to find closest intersecting object
     SceneState current_state;
     current_state.texture_node = nullptr;
+    current_state.transform_required = false;
+    current_state.inverse_matrix.set_identity();
+    current_state.normal_matrix.set_identity();
+
     SceneState closest;
     closest.t_min = 1e30f;  // Initialize to very large value
     closest.geometry_node = nullptr;
     closest.material_node = nullptr;
     closest.texture_node = nullptr;
+    closest.transform_required = false;
 
     scene_root_->find_closest_intersect(ray, current_state, closest);
 
@@ -45,11 +50,19 @@ Color3 RayTracer::trace_ray(Ray &ray)
     MaterialNode *material = (MaterialNode *)closest.material_node;
     GeometryNode *nearest_object = (GeometryNode *)closest.geometry_node;
 
-    // Find the intersection point
+    // Find the intersection point (in world space)
     Point3 int_pt = ray.intersect(closest.t_min);
 
-    // Get the normal (transform if needed)
+    // Get the normal in object space
     Vector3 normal = nearest_object->get_normal(int_pt);
+
+    // Transform normal to world space if object had modeling transforms
+    if (closest.transform_required)
+    {
+        // The normal matrix (transpose of inverse) transforms normals correctly
+        normal = closest.normal_matrix * normal;
+        normal.normalize();
+    }
 
     // Check if material exists
     if(!material)

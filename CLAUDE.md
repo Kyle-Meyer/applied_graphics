@@ -60,6 +60,20 @@ Complete for ray tracing. If a ray does not intersect the BV, sub-tree intersect
 - `does_intersect_exist` - shadow ray occlusion test
 - `scene_state.*` - carries state through scene graph traversal
 
+### 8. RTTransformNode - COMPLETE ✓
+Transform node for ray tracing that supports modeling transformations on geometry:
+- Transforms rays to object space using inverse of modeling matrix
+- Stores inverse matrix and normal matrix in SceneState for result transformation
+- Normal matrix (transpose of inverse) correctly transforms normals back to world space
+- Works with translate, rotate, scale operations from parent TransformNode class
+- Caches inverse/normal matrices for performance (computed once on first ray)
+
+### 9. AABBNode (Bounding Volume Hierarchy) - COMPLETE ✓
+Axis-aligned bounding box node for hierarchical culling:
+- `find_closest_intersect`: Tests ray against AABB, skips children if miss
+- `does_intersect_exist`: Tests ray against AABB, skips children if miss or beyond distance
+- Used to wrap groups of geometry (e.g., all mesh objects) for early rejection
+
 ---
 
 ## Scene Requirements Checklist
@@ -70,8 +84,8 @@ Complete for ray tracing. If a ray does not intersect the BV, sub-tree intersect
 - [x] At least 2 sphere objects (using ray/sphere intersect, not mesh)
 - [x] At least 2 planar surfaces (quadrilaterals, walls, floor) - back wall + left wall
 - [x] At least 3 triangle mesh objects with:
-  - [ ] Modeling transformation (scale, translate, rotate) - TODO
-  - [ ] Inverse modeling matrix for ray transformation - TODO
+  - [x] Modeling transformation (scale, translate, rotate) - RTTransformNode
+  - [x] Inverse modeling matrix for ray transformation - RTTransformNode
   - [x] AABB bounding volume (check BV before individual triangles)
 
 #### Effects
@@ -85,7 +99,7 @@ Complete for ray tracing. If a ray does not intersect the BV, sub-tree intersect
 
 #### Optimization
 - [x] Adaptive depth testing (recursion level check implemented)
-- [ ] Hierarchy of Bounding Objects (AABB parent to geometry nodes)
+- [x] Hierarchy of Bounding Objects (AABBNode wrapping mesh objects)
 
 ### Bonus Extensions (up to +4%)
 
@@ -100,23 +114,24 @@ Complete for ray tracing. If a ray does not intersect the BV, sub-tree intersect
 
 ```
 Camera: (7, 0.5, -5) looking at origin
-Light: (5, 5, 10)
+Light: (4, 6, -1)
 
-Spheres:
-- Red sphere at origin (radius 0.5)
-- Mirror sphere at (-1.5, 0, 0) (radius 0.5) - reflective
-- Glass sphere at (1.2, 0, 0) (radius 0.5) - transparent
-- Green sphere at (1.5, 0, 3) (radius 0.4) - behind glass
+Spheres (moved left to reveal mesh objects):
+- Red sphere at (-1.5, 0, 0) (radius 0.5)
+- Mirror sphere at (-3, 0, 0) (radius 0.5) - reflective
+- Glass sphere at (-0.3, 0, 0) (radius 0.5) - transparent
+- Green sphere at (0, 0, 3) (radius 0.4)
 - Floor: large sphere (radius 1000, center at y=-1001) - checkered texture
 
 Planar Surfaces (RTQuadNode):
 - Back wall at z=8 - image texture (floor_tiles.jpg)
 - Left wall (tan) at x=-5
 
-Triangle Meshes (RTMeshNode with AABB):
-- Yellow pyramid at (-3, -1, 2)
-- Cyan box at (2.5, -1, 4) - slightly reflective
-- Purple wedge/ramp at (-4, -1, 5)
+Triangle Meshes (RTMeshNode with RTTransformNode, wrapped in AABBNode):
+- Parent AABBNode bounds: (-5, -1.5, 1) to (4, 1, 8) - culls all meshes if ray misses
+- Yellow pyramid: unit mesh at origin, transformed with scale(1.5), rotate_y(15°), translate(-2.5, -1, 2.5)
+- Cyan box: unit cube at origin, transformed with scale(0.8), rotate_y(30°), translate(2.9, -0.6, 4.4) - reflective
+- Purple wedge: unit wedge at origin, transformed with scale(1, 1, 2), rotate_y(-20°), translate(-3.5, -1, 6)
 ```
 
 ---
@@ -133,9 +148,10 @@ Triangle Meshes (RTMeshNode with AABB):
 
 - `geometry/ray3.cpp` - Added `refract()` implementation
 - `RayTracer/ray.cpp` - Added `get_refracted_ray()` implementation
-- `RayTracer/ray_tracer.cpp` - Added reflection, refraction, and texture color modulation in `trace_ray()`
-- `RayTracer/main.cpp` - Test scene with spheres, walls, meshes, and textures
+- `RayTracer/ray_tracer.cpp` - Added reflection, refraction, texture modulation, and normal transformation
+- `RayTracer/main.cpp` - Test scene with spheres, walls, meshes, textures, transforms, and bounding hierarchy
 - `geometry/geometry.hpp` - Increased EPSILON to 0.0001
+- `scene/bounding_aabb_node.cpp` - Implemented `find_closest_intersect` and `does_intersect_exist` for ray tracing
 
 ## Files Created
 
@@ -145,6 +161,8 @@ Triangle Meshes (RTMeshNode with AABB):
 - `RayTracer/rt_mesh_node.cpp` - Implementation with AABB culling and barycentric interpolation
 - `RayTracer/functional_texture.hpp` - Function-based procedural texture class
 - `RayTracer/functional_texture.cpp` - Implementation with static factory methods (checkerboard, stripes, gradient)
+- `RayTracer/rt_transform_node.hpp` - Transform node for ray tracing with inverse matrix support
+- `RayTracer/rt_transform_node.cpp` - Transforms rays to object space, stores inverse/normal matrices
 
 ## Texturing Architecture
 
