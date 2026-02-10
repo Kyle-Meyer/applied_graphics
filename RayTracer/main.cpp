@@ -75,13 +75,22 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     // 605.767 - Student to define. Create a scene graph to describe your scene
     auto scene_node = std::make_shared<cg::SceneNode>();
 
-    // Red sphere (moved left to reveal mesh objects)
+    // Marble sphere (moved left to reveal mesh objects)
     auto material = std::make_shared<cg::MaterialNode>();
-    material->set_ambient_and_diffuse(cg::Color4(0.8f, 0.2f, 0.2f, 1.0f));
+    material->set_ambient_and_diffuse(cg::Color4(0.9f, 0.9f, 0.9f, 1.0f));  // White base for marble texture
     material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
     material->set_shininess(64.0f);
+
+    // Marble texture using Perlin noise turbulence
+    auto marble_texture = cg::FunctionalTexture::marble(
+        cg::Color3(0.95f, 0.95f, 0.95f),  // White base
+        cg::Color3(0.3f, 0.08f, 0.08f),   // Dark red veins
+        3.0f,                               // Scale (frequency)
+        5.0f);                              // Turbulence strength
+
     auto sphere = std::make_shared<cg::RTSphereNode>(cg::Point3(-1.5f, 0.0f, 0.0f), 0.5f);
-    material->add_child(std::static_pointer_cast<cg::SceneNode>(sphere));
+    marble_texture->add_child(sphere);
+    material->add_child(marble_texture);
     scene_node->add_child(material);
 
     // Add a floor using a very large sphere (appears nearly flat) with checkerboard texture
@@ -308,6 +317,16 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
 
 void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
 {
+    // Sub-pixel offsets for 2x2 supersampling (stratified within pixel)
+    static const float offsets[4][2] = {
+        {0.25f, 0.25f}, {0.75f, 0.25f},
+        {0.25f, 0.75f}, {0.75f, 0.75f}
+    };
+
+    // Only supersample on the final pass (block_size == 1).
+    // Coarser passes are just progressive previews that get overwritten.
+    const bool supersample = (block_size == 1);
+
     for(int32_t row = start_row; row <= end_row; ++row)
     {
         int32_t y = row * block_size;
@@ -316,12 +335,31 @@ void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
             // Check if framebuffer has been set for this pixel
             if(!g_frame_buffer->set(x, y))
             {
-                // Construct a ray through the specified pixel and find the color
-                // using the recursive ray tracer
-                cg::Ray3 ray =
-                    g_camera->construct_ray(static_cast<float>(x), static_cast<float>(y));
-                cg::Color3 color = g_ray_tracer->trace_ray(ray, g_max_depth, DEPTH_THRESHOLD);
-                g_frame_buffer->set(x, y, color, block_size);
+                float fx = static_cast<float>(x);
+                float fy = static_cast<float>(y);
+
+                if(supersample)
+                {
+                    // Trace 4 rays per pixel at sub-pixel positions and average
+                    float r = 0.0f, g = 0.0f, b = 0.0f;
+                    for(int s = 0; s < 4; ++s)
+                    {
+                        cg::Ray3 ray = g_camera->construct_ray(
+                            fx - 0.5f + offsets[s][0],
+                            fy - 0.5f + offsets[s][1]);
+                        cg::Color3 c = g_ray_tracer->trace_ray(ray, g_max_depth, DEPTH_THRESHOLD);
+                        r += c.r; g += c.g; b += c.b;
+                    }
+                    cg::Color3 color(r * 0.25f, g * 0.25f, b * 0.25f);
+                    g_frame_buffer->set(x, y, color, block_size);
+                }
+                else
+                {
+                    // Single ray for preview passes
+                    cg::Ray3 ray = g_camera->construct_ray(fx, fy);
+                    cg::Color3 color = g_ray_tracer->trace_ray(ray, g_max_depth, DEPTH_THRESHOLD);
+                    g_frame_buffer->set(x, y, color, block_size);
+                }
             }
         }
     }

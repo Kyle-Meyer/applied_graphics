@@ -79,6 +79,17 @@ class FunctionalTexture : public TextureNode
     static std::shared_ptr<FunctionalTexture> gradient(
         const Color3 &bottom_color, const Color3 &top_color);
 
+    /**
+     * Create a marble pattern using Perlin noise turbulence.
+     * @param base_color  Base marble color (e.g., white)
+     * @param vein_color  Vein/streak color (e.g., dark gray or dark red)
+     * @param scale       Frequency of the marble pattern
+     * @param turbulence_strength  How much turbulence distorts the veins
+     */
+    static std::shared_ptr<FunctionalTexture> marble(
+        const Color3 &base_color, const Color3 &vein_color,
+        float scale = 1.0f, float turbulence_strength = 5.0f);
+
   private:
     PointPatternFn point_pattern_;
     UVPatternFn    uv_pattern_;

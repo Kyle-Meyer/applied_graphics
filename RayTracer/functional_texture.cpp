@@ -1,5 +1,8 @@
 #include "RayTracer/functional_texture.hpp"
 
+#define STB_PERLIN_IMPLEMENTATION
+#include "stb/stb_perlin.h"
+
 namespace cg
 {
 
@@ -96,6 +99,28 @@ std::shared_ptr<FunctionalTexture> FunctionalTexture::gradient(
     };
 
     return std::make_shared<FunctionalTexture>(point_fn, uv_fn);
+}
+
+std::shared_ptr<FunctionalTexture> FunctionalTexture::marble(
+    const Color3 &base_color, const Color3 &vein_color,
+    float scale, float turbulence_strength)
+{
+    auto point_fn = [base_color, vein_color, scale, turbulence_strength](const Point3 &p) -> Color3 {
+        // Turbulence from Perlin noise (6 octaves, lacunarity 2.0, gain 0.5)
+        float turb = stb_perlin_turbulence_noise3(
+            p.x * scale, p.y * scale, p.z * scale, 2.0f, 0.5f, 6);
+
+        // Classic marble: sin wave along one axis, distorted by turbulence
+        float t = std::sin(p.x * scale + turbulence_strength * turb) * 0.5f + 0.5f;
+
+        // Smooth interpolation between vein and base colors
+        return Color3(
+            vein_color.r + t * (base_color.r - vein_color.r),
+            vein_color.g + t * (base_color.g - vein_color.g),
+            vein_color.b + t * (base_color.b - vein_color.b));
+    };
+
+    return std::make_shared<FunctionalTexture>(point_fn);
 }
 
 } // namespace cg
