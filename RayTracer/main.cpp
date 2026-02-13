@@ -75,6 +75,14 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     // 605.767 - Student to define. Create a scene graph to describe your scene
     auto scene_node = std::make_shared<cg::SceneNode>();
 
+    // ========== FRONT SPHERES (wrapped in AABB for culling) ==========
+    // All 3 spheres are near z=0, clustered in x from -3.5 to 0.2
+    auto front_spheres_aabb = std::make_shared<cg::AABBNode>();
+    front_spheres_aabb->set(
+        cg::Point3(-3.5f, -0.5f, -0.5f),   // min corner
+        cg::Point3(0.2f, 0.5f, 0.5f)       // max corner
+    );
+
     // Marble sphere (moved left to reveal mesh objects)
     auto material = std::make_shared<cg::MaterialNode>();
     material->set_ambient_and_diffuse(cg::Color4(0.9f, 0.9f, 0.9f, 1.0f));  // White base for marble texture
@@ -91,7 +99,7 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     auto sphere = std::make_shared<cg::RTSphereNode>(cg::Point3(-1.5f, 0.0f, 0.0f), 0.5f);
     marble_texture->add_child(sphere);
     material->add_child(marble_texture);
-    scene_node->add_child(material);
+    front_spheres_aabb->add_child(material);
 
     // Add a floor using a very large sphere (appears nearly flat) with checkerboard texture
     auto floor_material = std::make_shared<cg::MaterialNode>();
@@ -121,17 +129,7 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     auto mirror_sphere = std::make_shared<cg::RTSphereNode>(
         cg::Point3(-3.0f, 0.0f, 0.0f), 0.5f);
     mirror_material->add_child(std::static_pointer_cast<cg::SceneNode>(mirror_sphere));
-    scene_node->add_child(mirror_material);
-
-    // Green sphere (behind glass, moved left)
-    auto green_material = std::make_shared<cg::MaterialNode>();
-    green_material->set_ambient_and_diffuse(cg::Color4(0.2f, 0.8f, 0.2f, 1.0f));
-    green_material->set_specular(cg::Color4(0.5f, 0.5f, 0.5f, 1.0f));
-    green_material->set_shininess(32.0f);
-    auto green_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(0.0f, 0.0f, 3.0f), 0.4f);
-    green_material->add_child(std::static_pointer_cast<cg::SceneNode>(green_sphere));
-    scene_node->add_child(green_material);
+    front_spheres_aabb->add_child(mirror_material);
 
     // Glass ball (transparent/refractive, moved left)
     auto glass_material = std::make_shared<cg::MaterialNode>();
@@ -143,9 +141,26 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     auto glass_sphere = std::make_shared<cg::RTSphereNode>(
         cg::Point3(-0.3f, 0.0f, 0.0f), 0.5f);
     glass_material->add_child(std::static_pointer_cast<cg::SceneNode>(glass_sphere));
-    scene_node->add_child(glass_material);
+    front_spheres_aabb->add_child(glass_material);
 
-    // ========== PLANAR SURFACES (2 walls) ==========
+    // Add the front spheres bounding box to the scene
+    scene_node->add_child(front_spheres_aabb);
+
+    // Green sphere (behind glass) - added to mesh bounding box since it's within those bounds
+    auto green_material = std::make_shared<cg::MaterialNode>();
+    green_material->set_ambient_and_diffuse(cg::Color4(0.2f, 0.8f, 0.2f, 1.0f));
+    green_material->set_specular(cg::Color4(0.5f, 0.5f, 0.5f, 1.0f));
+    green_material->set_shininess(32.0f);
+    auto green_sphere = std::make_shared<cg::RTSphereNode>(
+        cg::Point3(0.0f, 0.0f, 3.0f), 0.4f);
+    green_material->add_child(std::static_pointer_cast<cg::SceneNode>(green_sphere));
+
+    // ========== PLANAR SURFACES (2 walls, wrapped in AABB) ==========
+    auto walls_aabb = std::make_shared<cg::AABBNode>();
+    walls_aabb->set(
+        cg::Point3(-5.0f, -1.0f, -2.0f),   // min corner
+        cg::Point3(5.0f, 4.0f, 8.0f)       // max corner
+    );
 
     // Back wall with image texture
     auto back_wall_material = std::make_shared<cg::MaterialNode>();
@@ -163,7 +178,7 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
         cg::Point3(5.0f, 4.0f, 8.0f));    // top-right (reversed for normal toward -Z)
     wall_texture->add_child(back_wall);
     back_wall_material->add_child(wall_texture);
-    scene_node->add_child(back_wall_material);
+    walls_aabb->add_child(back_wall_material);
 
     // Left wall (tan/beige)
     auto left_wall_material = std::make_shared<cg::MaterialNode>();
@@ -177,18 +192,23 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
         cg::Point3(-5.0f, 4.0f, -2.0f),   // top-front
         cg::Point3(-5.0f, 4.0f, 8.0f));   // top-back (reversed for normal toward +X)
     left_wall_material->add_child(std::static_pointer_cast<cg::SceneNode>(left_wall));
-    scene_node->add_child(left_wall_material);
+    walls_aabb->add_child(left_wall_material);
 
-    // ========== TRIANGLE MESH OBJECTS (3 meshes with transforms) ==========
-    // All meshes are wrapped in a parent AABBNode for hierarchical culling
+    scene_node->add_child(walls_aabb);
 
-    // Create parent bounding box that encompasses all mesh objects
-    // Bounds calculated from world-space positions of all three meshes
+    // ========== TRIANGLE MESH OBJECTS + GREEN SPHERE (wrapped in AABB) ==========
+    // All meshes and the green sphere are wrapped in a parent AABBNode for hierarchical culling
+    // Green sphere at (0,0,3) r=0.4 falls within these bounds
+
+    // Create parent bounding box that encompasses all mesh objects and green sphere
     auto mesh_bounding_box = std::make_shared<cg::AABBNode>();
     mesh_bounding_box->set(
         cg::Point3(-5.0f, -1.5f, 1.0f),   // min corner
         cg::Point3(4.0f, 1.0f, 8.0f)      // max corner
     );
+
+    // Add green sphere to this group (it's spatially within these bounds)
+    mesh_bounding_box->add_child(green_material);
 
     // Mesh 1: Yellow pyramid - defined at origin, transformed to position
     auto pyramid_material = std::make_shared<cg::MaterialNode>();

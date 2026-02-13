@@ -26,10 +26,11 @@ void AABBNode::update(SceneState &scene_state)
 void AABBNode::find_closest_intersect(Ray3 ray, SceneState &current_state, SceneState &closest)
 {
     // Test ray against bounding box - if miss, skip all children
+    // First hit speedup: also skip if box entry is beyond current closest hit
     RayObjectIntersectResult result = ray.intersect(box_);
-    if (!result.intersects)
+    if (!result.intersects || result.distance > closest.t_min)
     {
-        return;  // Ray misses bounding box, skip entire subtree
+        return;  // Ray misses bounding box or box is farther than closest hit
     }
 
     // Ray hits bounding box - traverse children to find actual intersections
