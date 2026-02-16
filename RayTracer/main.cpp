@@ -211,10 +211,12 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     mesh_bounding_box->add_child(green_material);
 
     // Mesh 1: Yellow pyramid - defined at origin, transformed to position
+    // Rough gold metallic - low shininess gives high roughness in Cook-Torrance,
+    // producing a broad, soft specular highlight (vs. Phong's sharp falloff)
     auto pyramid_material = std::make_shared<cg::MaterialNode>();
     pyramid_material->set_ambient_and_diffuse(cg::Color4(0.9f, 0.8f, 0.1f, 1.0f));
-    pyramid_material->set_specular(cg::Color4(0.4f, 0.4f, 0.4f, 1.0f));
-    pyramid_material->set_shininess(32.0f);
+    pyramid_material->set_specular(cg::Color4(0.8f, 0.7f, 0.3f, 1.0f));  // Gold-tinted specular (metallic)
+    pyramid_material->set_shininess(8.0f);  // Low shininess = high roughness for Cook-Torrance
 
     // Unit pyramid centered at origin with base at y=0 and apex at y=1
     std::vector<cg::Point3> pyramid_verts = {

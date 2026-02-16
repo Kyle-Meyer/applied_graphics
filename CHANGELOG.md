@@ -1,5 +1,22 @@
 # Changelog
 
+## [unreleased] - 2026-02-16 - Cook-Torrance lighting
+
+**Cook-Torrance BRDF replacing Phong-Blinn specular model.**
+
+- Replaced the Phong-Blinn specular calculation in `lighting.cpp` with a Cook-Torrance microfacet BRDF using GGX normal distribution, Smith-Schlick geometry term, and Schlick Fresnel approximation
+- Added energy conservation: diffuse contribution is reduced by `(1 - Fresnel)` so surfaces never reflect more light than they receive
+- Maps existing Phong shininess values to roughness via `sqrt(2 / (shininess + 2))`, so all existing materials work without changes
+- Added `use_cook_torrance_` flag to `Lighting` class with `set_use_cook_torrance()` toggle -- Phong-Blinn remains as a fallback
+- Updated pyramid material to demonstrate Cook-Torrance: low shininess (8) for high roughness with gold-tinted metallic specular `(0.8, 0.7, 0.3)`
+
+**Why:** Cook-Torrance is a physically-based reflection model that produces more realistic specular highlights than Phong-Blinn.
+The GGX distribution gives wider, softer highlights on rough surfaces and tighter highlights on smooth ones.
+Fresnel effects mean surfaces reflect more light at grazing angles, which is especially visible on metallic objects.
+This also satisfies the bonus requirement for an alternative to Phong reflection (+2%).
+
+---
+
 ## [0aeac81] - 2026-02-09 - perhaps 100%?
 
 **Image texturing on surfaces via UV coordinates.**

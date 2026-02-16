@@ -50,6 +50,13 @@ class Lighting
     void set_view_position(const Point3 &pos);
 
     /**
+     * Enable or disable Cook-Torrance BRDF (enabled by default).
+     * When disabled, falls back to Phong-Blinn.
+     * @param  enable  True to use Cook-Torrance, false for Phong-Blinn
+     */
+    void set_use_cook_torrance(bool enable);
+
+    /**
      * Compute the local contribution given a light source, material, intersection point,
      * and normal.
      * @param  light         Pointer to the light source
@@ -69,6 +76,7 @@ class Lighting
   private:
     Point3 view_position_;
     Color3 ambient_;
+    bool   use_cook_torrance_;
 };
 
 } // namespace cg
