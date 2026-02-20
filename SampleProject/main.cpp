@@ -21,6 +21,8 @@
 
 #include "SampleProject/lighting_shader_node.hpp"
 #include "SampleProject/shader_src.hpp"
+#include "scene/bounding_aabb_node.hpp"
+#include "scene/bounding_sphere_node.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -858,29 +860,60 @@ void construct_scene()
     auto myscene = std::make_shared<cg::SceneNode>();
     Spotlight->add_child(myscene);
 
-    // Add the room (walls, floor, ceiling)
+    // Add the room (walls, floor, ceiling) - no BV, always drawn
     myscene->add_child(room);
 
-    // Add the table
-    myscene->add_child(wood);
+    // ========== Table group wrapped in AABB for frustum culling ==========
+    // Table is at (-50, 50) rotated 30deg, roughly spans x:[-80,-20] y:[20,80] z:[0,30]
+    auto table_aabb = std::make_shared<cg::AABBNode>();
+    table_aabb->set_name("Table Group");
+    table_aabb->set(cg::Point3(-85.0f, 15.0f, 0.0f), cg::Point3(-15.0f, 85.0f, 35.0f));
+    myscene->add_child(table_aabb);
+
+    table_aabb->add_child(wood);
     wood->add_child(table_transform);
     table_transform->add_child(table);
 
-    // Add teapot as a child of the table transform.
+    // Add teapot as a child of the table transform
     add_sub_tree(table_transform, teapot_material, teapot_transform, teapot);
 
-    // Add coke can as children of the table transform.
+    // Add coke can as children of the table transform
     add_sub_tree(table_transform, coke_texture, coke_transform, can);
 
-    // Add box in the back right corner with the cone on top
-    myscene->add_child(box_position_transform);
+    // ========== Box + Cone wrapped in bounding sphere ==========
+    // Box+cone at (80, 80), z from 0 to ~22.5 -> center ~(80,80,12), radius ~20
+    auto boxcone_sphere = std::make_shared<cg::BoundingSphereNode>();
+    boxcone_sphere->set_name("Box+Cone");
+    boxcone_sphere->set_bounding_sphere(cg::BoundingSphere(cg::Point3(80.0f, 80.0f, 12.0f), 22.0f));
+    myscene->add_child(boxcone_sphere);
+
+    boxcone_sphere->add_child(box_position_transform);
     add_sub_tree(box_position_transform, box_material, box_transform, unit_box);
     add_sub_tree(box_position_transform, cone_material, cone_transform, cone);
 
-    // Add the vase, globe, and painting
-    myscene->add_child(vase);
-    myscene->add_child(globe);
-    myscene->add_child(painting);
+    // ========== Vase wrapped in AABB ==========
+    // Vase at (0, 75, 10), scaled 10x10x20 -> roughly x:[-10,10] y:[65,85] z:[0,20]
+    auto vase_aabb = std::make_shared<cg::AABBNode>();
+    vase_aabb->set_name("Vase");
+    vase_aabb->set(cg::Point3(-12.0f, 63.0f, -2.0f), cg::Point3(12.0f, 87.0f, 22.0f));
+    myscene->add_child(vase_aabb);
+    vase_aabb->add_child(vase);
+
+    // ========== Globe wrapped in bounding sphere ==========
+    // Globe at (80, 20, 10) scaled 10 -> radius ~10
+    auto globe_sphere = std::make_shared<cg::BoundingSphereNode>();
+    globe_sphere->set_name("Globe");
+    globe_sphere->set_bounding_sphere(cg::BoundingSphere(cg::Point3(80.0f, 20.0f, 10.0f), 12.0f));
+    myscene->add_child(globe_sphere);
+    globe_sphere->add_child(globe);
+
+    // ========== Painting wrapped in AABB ==========
+    // Painting at (50, 99, 40), scaled 30x22 -> x:[35,65] y:[98,100] z:[29,51]
+    auto painting_aabb = std::make_shared<cg::AABBNode>();
+    painting_aabb->set_name("Painting");
+    painting_aabb->set(cg::Point3(33.0f, 97.0f, 27.0f), cg::Point3(67.0f, 101.0f, 53.0f));
+    myscene->add_child(painting_aabb);
+    painting_aabb->add_child(painting);
 }
 
 /**

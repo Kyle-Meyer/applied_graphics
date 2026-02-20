@@ -29,6 +29,9 @@ void CameraNode::draw(SceneState &scene_state)
     // Copy the current composite projection and viewing matrix to the scene state
     scene_state.pv = proj_ * view_;
 
+    // Construct view frustum planes for culling
+    scene_state.frustum.construct(scene_state.pv);
+
     // Set the shader PVM matrix - this will allow drawing children without a TransformNode
     glUniformMatrix4fv(scene_state.pvm_matrix_loc, 1, GL_FALSE, scene_state.pv.get());
 

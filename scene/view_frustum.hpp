@@ -15,11 +15,10 @@
 
 #include "geometry/aabb.hpp"
 #include "geometry/bounding_sphere.hpp"
+#include "geometry/matrix.hpp"
 #include "geometry/plane.hpp"
-#include "scene/camera_node.hpp"
 
 #include <array>
-#include <memory>
 
 namespace cg
 {
@@ -55,12 +54,11 @@ class ViewFrustum
     ViewFrustum();
 
     /**
-     * Construct a view frustum from the definition of the view held within
-     * the CameraNode class. NOTE - this method is defined in scene.h due
-     * to dependencies and include order.
-     * @param  camera   Camera / view class.
+     * Construct a view frustum by extracting 6 planes from the combined
+     * view-projection matrix using the Gribb-Hartmann method.
+     * @param  vp  Combined projection * view matrix.
      */
-    void construct(std::shared_ptr<CameraNode> camera);
+    void construct(const Matrix4x4 &vp);
 
     /**
      * Determine the intersection 'state" of a bounding sphere and the

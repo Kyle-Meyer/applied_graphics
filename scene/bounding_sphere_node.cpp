@@ -1,5 +1,7 @@
 #include "scene/bounding_sphere_node.hpp"
 
+#include <iostream>
+
 namespace cg
 {
 
@@ -19,7 +21,12 @@ void BoundingSphereNode::merge_bounding_sphere(const BoundingSphere &sphere)
 
 void BoundingSphereNode::draw(SceneState &scene_state)
 {
-    // TBD - culling
+    FrustumIntersectType result = scene_state.frustum.intersect(bounding_sphere_);
+    if (result == FrustumIntersectType::OUTSIDE)
+    {
+        std::cout << "CULLED (Sphere): " << name_ << std::endl;
+        return;
+    }
 
     // Draw children of this node
     SceneNode::draw(scene_state);

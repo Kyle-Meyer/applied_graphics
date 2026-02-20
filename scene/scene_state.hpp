@@ -14,6 +14,7 @@
 
 #include "geometry/matrix.hpp"
 #include "scene/graphics.hpp"
+#include "scene/view_frustum.hpp"
 
 #include <array>
 #include <list>
@@ -88,6 +89,9 @@ struct SceneState
     Matrix4x4             normal_matrix;
 
     Point3 camera_position;
+
+    // View frustum for culling
+    ViewFrustum frustum;
 
     // Retained state to push/pop modeling matrix
     std::list<Matrix4x4> model_matrix_stack;

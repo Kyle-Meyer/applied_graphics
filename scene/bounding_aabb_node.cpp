@@ -1,5 +1,7 @@
 #include "scene/bounding_aabb_node.hpp"
 
+#include <iostream>
+
 namespace cg
 {
 
@@ -11,7 +13,12 @@ void AABBNode::set(const Point3 &min_pt, const Point3 &max_pt) { box_.update(min
 
 void AABBNode::draw(SceneState &scene_state)
 {
-    // TBD - add culling logic!
+    FrustumIntersectType result = scene_state.frustum.intersect(box_);
+    if (result == FrustumIntersectType::OUTSIDE)
+    {
+        std::cout << "CULLED (AABB): " << name_ << std::endl;
+        return;
+    }
 
     // Draw children of this node
     SceneNode::draw(scene_state);

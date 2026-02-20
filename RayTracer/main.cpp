@@ -61,6 +61,9 @@ std::unique_ptr<cg::Framebuffer> g_frame_buffer;
 int32_t     g_max_depth = 15;
 const float DEPTH_THRESHOLD = 0.025f;
 
+// Anti-aliasing toggle (supersampling + post-process AA)
+bool g_anti_aliasing = true;
+
 // Ray Tracer
 cg::RayTracer *g_ray_tracer = 0;
 
@@ -345,9 +348,8 @@ void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
         {0.25f, 0.75f}, {0.75f, 0.75f}
     };
 
-    // Only supersample on the final pass (block_size == 1).
-    // Coarser passes are just progressive previews that get overwritten.
-    const bool supersample = (block_size == 1);
+    // Only supersample on the final pass (block_size == 1) and if AA is enabled.
+    const bool supersample = g_anti_aliasing && (block_size == 1);
 
     for(int32_t row = start_row; row <= end_row; ++row)
     {
@@ -421,7 +423,7 @@ void display()
     }
 
     // Final scene - simple anti-aliasing (without shooting additional rays)
-    g_frame_buffer->anti_alias();
+    if (g_anti_aliasing) g_frame_buffer->anti_alias();
     SDL_GL_SwapWindow(g_sdl_window);
 }
 
@@ -444,7 +446,7 @@ void display()
     }
 
     // Final scene - simple anti-aliasing (without shooting additional rays)
-    g_frame_buffer->anti_alias();
+    if (g_anti_aliasing) g_frame_buffer->anti_alias();
     SDL_GL_SwapWindow(g_sdl_window);
 }
 
@@ -521,6 +523,13 @@ cg::EventType handle_key_event(const SDL_Event &event)
             result = cg::EventType::REDRAW;
             break;
 
+        // Toggle anti-aliasing
+        case SDLK_A:
+            g_anti_aliasing = !g_anti_aliasing;
+            std::cout << "Anti-aliasing: " << (g_anti_aliasing ? "ON" : "OFF") << std::endl;
+            result = cg::EventType::REDRAW;
+            break;
+
         default: break;
     }
 
@@ -572,6 +581,7 @@ int main(int argc, char **argv)
     std::cout << "r,R - Change camera roll\n";
     std::cout << "p,P - Change camera pitch\n";
     std::cout << "h,H - Change camera heading\n";
+    std::cout << "a   - Toggle anti-aliasing\n";
 
     // Initialize SDL
     if(!SDL_Init(SDL_INIT_VIDEO))
