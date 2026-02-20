@@ -1,5 +1,5 @@
 # Changelog
-
+#================================ ASSIGNMENT 1 END ====================================================================
 ## [unreleased] - 2026-02-16 - Cook-Torrance lighting
 
 **Cook-Torrance BRDF replacing Phong-Blinn specular model.**
