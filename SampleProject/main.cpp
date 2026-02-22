@@ -23,9 +23,11 @@
 #include "SampleProject/shader_src.hpp"
 #include "scene/bounding_aabb_node.hpp"
 #include "scene/bounding_sphere_node.hpp"
+#include "scene/lod_node.hpp"
 
 #include <chrono>
 #include <iostream>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -573,15 +575,33 @@ std::shared_ptr<cg::SceneNode> construct_vase(const int position_loc, const int 
 }
 
 /**
- * Construct a sphere with a shiny blue material.
+ * Construct a globe with LOD: 3 sphere subdivision levels selected by distance.
+ *   Level 0 (high):   36 lat x 72 lon  - distance <= 60
+ *   Level 1 (medium): 18 lat x 36 lon  - distance <= 120
+ *   Level 2 (low):     9 lat x 18 lon  - distance > 120
  */
 std::shared_ptr<cg::SceneNode>
     construct_globe(int32_t position_loc, int32_t normal_loc, int32_t texture_loc)
 {
-    auto sphere = std::make_shared<cg::TexturedSphereSection>(
+    // Three meshes at different subdivision levels
+    auto sphere_high = std::make_shared<cg::TexturedSphereSection>(
+        -90.0f, 90.0f, 36, -180.0f, 180.0f, 72, 1.0f, position_loc, normal_loc, texture_loc);
+    auto sphere_mid = std::make_shared<cg::TexturedSphereSection>(
         -90.0f, 90.0f, 18, -180.0f, 180.0f, 36, 1.0f, position_loc, normal_loc, texture_loc);
+    auto sphere_low = std::make_shared<cg::TexturedSphereSection>(
+        -90.0f, 90.0f,  9, -180.0f, 180.0f, 18, 1.0f, position_loc, normal_loc, texture_loc);
 
-    // Globe material
+    // LOD node — each level is just the raw geometry. The material node sits
+    // above the LOD node and applies to whichever geometry is selected.
+    //   Level 0 (high):   distance <= 60
+    //   Level 1 (medium): distance <= 120
+    //   Level 2 (low):    distance > 120
+    auto lod = std::make_shared<cg::LODNode>("Globe");
+    lod->add_level(60.0f,                             sphere_high);
+    lod->add_level(120.0f,                            sphere_mid);
+    lod->add_level(std::numeric_limits<float>::max(), sphere_low);
+
+    // Material applies once, above the LOD selector
     auto globe_material = std::make_shared<cg::PresentationNode>(cg::Color4(0.15f, 0.15f, 0.15f),
                                                                  cg::Color4(0.5f, 0.5f, 0.5f),
                                                                  cg::Color4(1.0f, 1.0f, 1.0f),
@@ -592,15 +612,17 @@ std::shared_ptr<cg::SceneNode>
                                 GL_CLAMP_TO_EDGE,
                                 GL_LINEAR_MIPMAP_LINEAR,
                                 GL_LINEAR);
+    globe_material->add_child(lod);
 
-    // Sphere
+    // Position and scale transform
     auto sphere_transform = std::make_shared<cg::TransformNode>();
     sphere_transform->translate(80.0f, 20.0f, 10.0f);
     sphere_transform->scale(10.0f, 10.0f, 10.0f);
+    sphere_transform->add_child(globe_material);
 
-    // Form scene graph
+    // Form scene graph: transform -> material -> LODNode -> geometry
     auto globe = std::make_shared<cg::SceneNode>();
-    add_sub_tree(globe, globe_material, sphere_transform, sphere);
+    globe->add_child(sphere_transform);
     return globe;
 }
 
