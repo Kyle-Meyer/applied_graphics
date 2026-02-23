@@ -49,7 +49,7 @@ Framebuffer::~Framebuffer()
 void Framebuffer::clear()
 {
     // Clear all the set flags
-    for(auto s : pixel_set_) { s = false; }
+    for(auto &s : pixel_set_) { s = 0; }
 }
 
 void Framebuffer::set(int32_t x_LL, int32_t y_LL, Color3 &color, uint32_t block_size)

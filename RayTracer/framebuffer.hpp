@@ -92,7 +92,7 @@ class Framebuffer
     uint32_t          buffer_height_;
     uint32_t          tex_width_;
     uint32_t          tex_height_;
-    std::vector<bool> pixel_set_;
+    std::vector<uint8_t> pixel_set_;
     cColor3          *pixels_;
     cColor3          *tex_pixels_;
 

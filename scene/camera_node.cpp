@@ -68,6 +68,7 @@ void CameraNode::set_position_and_look_at_pt(const Point3 &vrp, const Point3 &lp
 void CameraNode::set_view_up(const Vector3 &vup)
 {
     view_up_ = vup;
+    nomimal_view_up_ = vup;
     look_at();
 }
 
@@ -207,7 +208,7 @@ Ray3 CameraNode::construct_ray(float x, float y) const
     // Add 0.5 to sample at pixel center
     // Normalize to [-1, 1] range, then scale by half dimensions
     float u = ((x + 0.5f) / static_cast<float>(image_width_) * 2.0f - 1.0f) * half_width_;
-    float v = (1.0f - (y + 0.5f) / static_cast<float>(image_height_) * 2.0f) * half_height_;
+    float v = ((y + 0.5f) / static_cast<float>(image_height_) * 2.0f - 1.0f) * half_height_;
 
     // Calculate point on the image plane
     // Start at camera position, move to near plane (forward = -view_normal_),
