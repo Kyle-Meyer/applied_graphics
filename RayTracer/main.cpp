@@ -18,15 +18,14 @@
 
 #include "RayTracer/framebuffer.hpp"
 #include "RayTracer/functional_texture.hpp"
-#include "RayTracer/image_texture.hpp"
 #include "RayTracer/lighting.hpp"
 #include "RayTracer/material_node.hpp"
 #include "RayTracer/ray_tracer.hpp"
 #include "RayTracer/rt_sphere_node.hpp"
-#include "RayTracer/rt_quad_node.hpp"
 #include "RayTracer/rt_mesh_node.hpp"
 #include "RayTracer/rt_transform_node.hpp"
 #include "scene/bounding_aabb_node.hpp"
+#include "scene/lod_node.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -41,8 +40,8 @@ SDL_GLContext g_gl_context;
 
 // Window width and height. Developement trick: for faster ray tracing keep
 // these values small until final image is ready
-int32_t g_image_width = 1280;
-int32_t g_image_height = 960;
+int32_t g_image_width = 1024;
+int32_t g_image_height = 768;
 
 // Constants. Set up the view plane a distance of 1.0 from the camera.
 // Set a field of view angle of 60 degrees.
@@ -58,7 +57,7 @@ std::shared_ptr<cg::CameraNode> g_camera;
 std::unique_ptr<cg::Framebuffer> g_frame_buffer;
 
 // Maximum depth to trace and adaptive threshold.
-int32_t     g_max_depth = 15;
+int32_t     g_max_depth = 8;
 const float DEPTH_THRESHOLD = 0.025f;
 
 // Anti-aliasing toggle (supersampling + post-process AA)
@@ -73,265 +72,216 @@ std::vector<cg::LightNode *> g_lights;
 // Scene construction
 std::shared_ptr<cg::SceneNode> g_scene_root;
 
-std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> camera)
+// Helper: build a unit pyramid mesh (4 triangular sides + base)
+// Base at y=0, apex at y=1, footprint -0.5..0.5 in x/z
+static std::shared_ptr<cg::RTMeshNode> make_pyramid()
 {
-    // 605.767 - Student to define. Create a scene graph to describe your scene
-    auto scene_node = std::make_shared<cg::SceneNode>();
-
-    // ========== FRONT SPHERES (wrapped in AABB for culling) ==========
-    // All 3 spheres are near z=0, clustered in x from -3.5 to 0.2
-    auto front_spheres_aabb = std::make_shared<cg::AABBNode>();
-    front_spheres_aabb->set(
-        cg::Point3(-3.5f, -0.5f, -0.5f),   // min corner
-        cg::Point3(0.2f, 0.5f, 0.5f)       // max corner
-    );
-
-    // Marble sphere (moved left to reveal mesh objects)
-    auto material = std::make_shared<cg::MaterialNode>();
-    material->set_ambient_and_diffuse(cg::Color4(0.9f, 0.9f, 0.9f, 1.0f));  // White base for marble texture
-    material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
-    material->set_shininess(64.0f);
-
-    // Marble texture using Perlin noise turbulence
-    auto marble_texture = cg::FunctionalTexture::marble(
-        cg::Color3(0.95f, 0.95f, 0.95f),  // White base
-        cg::Color3(0.3f, 0.08f, 0.08f),   // Dark red veins
-        3.0f,                               // Scale (frequency)
-        5.0f);                              // Turbulence strength
-
-    auto sphere = std::make_shared<cg::RTSphereNode>(cg::Point3(-1.5f, 0.0f, 0.0f), 0.5f);
-    marble_texture->add_child(sphere);
-    material->add_child(marble_texture);
-    front_spheres_aabb->add_child(material);
-
-    // Add a floor using a very large sphere (appears nearly flat) with checkerboard texture
-    auto floor_material = std::make_shared<cg::MaterialNode>();
-    floor_material->set_ambient_and_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));  // White base for texture
-    floor_material->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
-    floor_material->set_shininess(16.0f);
-
-    // Procedural checkerboard texture using FunctionalTexture
-    auto floor_texture = cg::FunctionalTexture::checkerboard(
-        cg::Color3(0.9f, 0.9f, 0.9f),   // Light gray
-        cg::Color3(0.2f, 0.2f, 0.2f),   // Dark gray
-        1.0f);                           // Scale
-
-    // Large sphere with center far below, surface at y = -1
-    // Radius 1000, center at (0, -1001, 0) puts the top of the sphere at y = -1
-    auto floor = std::make_shared<cg::RTSphereNode>(cg::Point3(0.0f, -1001.0f, 0.0f), 1000.0f);
-    floor_texture->add_child(floor);
-    floor_material->add_child(floor_texture);
-    scene_node->add_child(floor_material);
-
-    // Mirror ball (reflective, moved left)
-    auto mirror_material = std::make_shared<cg::MaterialNode>();
-    mirror_material->set_ambient_and_diffuse(cg::Color4(0.1f, 0.1f, 0.1f, 1.0f));
-    mirror_material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
-    mirror_material->set_shininess(128.0f);
-    mirror_material->set_global_reflectivity(0.9f, 0.9f, 0.9f);
-    auto mirror_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(-3.0f, 0.0f, 0.0f), 0.5f);
-    mirror_material->add_child(std::static_pointer_cast<cg::SceneNode>(mirror_sphere));
-    front_spheres_aabb->add_child(mirror_material);
-
-    // Glass ball (transparent/refractive, moved left)
-    auto glass_material = std::make_shared<cg::MaterialNode>();
-    glass_material->set_ambient_and_diffuse(cg::Color4(0.1f, 0.1f, 0.15f, 1.0f));
-    glass_material->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
-    glass_material->set_shininess(128.0f);
-    glass_material->set_global_transmission(0.95f, 0.95f, 0.95f);
-    glass_material->set_index_of_refraction(.83f);
-    auto glass_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(-0.3f, 0.0f, 0.0f), 0.5f);
-    glass_material->add_child(std::static_pointer_cast<cg::SceneNode>(glass_sphere));
-    front_spheres_aabb->add_child(glass_material);
-
-    // Add the front spheres bounding box to the scene
-    scene_node->add_child(front_spheres_aabb);
-
-    // Green sphere (behind glass) - added to mesh bounding box since it's within those bounds
-    auto green_material = std::make_shared<cg::MaterialNode>();
-    green_material->set_ambient_and_diffuse(cg::Color4(0.2f, 0.8f, 0.2f, 1.0f));
-    green_material->set_specular(cg::Color4(0.5f, 0.5f, 0.5f, 1.0f));
-    green_material->set_shininess(32.0f);
-    auto green_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(0.0f, 0.0f, 3.0f), 0.4f);
-    green_material->add_child(std::static_pointer_cast<cg::SceneNode>(green_sphere));
-
-    // ========== PLANAR SURFACES (2 walls, wrapped in AABB) ==========
-    auto walls_aabb = std::make_shared<cg::AABBNode>();
-    walls_aabb->set(
-        cg::Point3(-5.0f, -1.0f, -2.0f),   // min corner
-        cg::Point3(5.0f, 4.0f, 8.0f)       // max corner
-    );
-
-    // Back wall with image texture
-    auto back_wall_material = std::make_shared<cg::MaterialNode>();
-    back_wall_material->set_ambient_and_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));  // White base for texture
-    back_wall_material->set_specular(cg::Color4(0.2f, 0.2f, 0.2f, 1.0f));
-    back_wall_material->set_shininess(8.0f);
-
-    // Image texture from textures/ directory
-    auto wall_texture = std::make_shared<cg::ImageTexture>("floor_tiles.jpg");
-
-    auto back_wall = std::make_shared<cg::RTQuadNode>(
-        cg::Point3(5.0f, -1.0f, 8.0f),    // bottom-right
-        cg::Point3(-5.0f, -1.0f, 8.0f),   // bottom-left
-        cg::Point3(-5.0f, 4.0f, 8.0f),    // top-left
-        cg::Point3(5.0f, 4.0f, 8.0f));    // top-right (reversed for normal toward -Z)
-    wall_texture->add_child(back_wall);
-    back_wall_material->add_child(wall_texture);
-    walls_aabb->add_child(back_wall_material);
-
-    // Left wall (tan/beige)
-    auto left_wall_material = std::make_shared<cg::MaterialNode>();
-    left_wall_material->set_ambient_and_diffuse(cg::Color4(0.6f, 0.5f, 0.4f, 1.0f));
-    left_wall_material->set_specular(cg::Color4(0.2f, 0.2f, 0.2f, 1.0f));
-    left_wall_material->set_shininess(8.0f);
-
-    auto left_wall = std::make_shared<cg::RTQuadNode>(
-        cg::Point3(-5.0f, -1.0f, 8.0f),   // bottom-back
-        cg::Point3(-5.0f, -1.0f, -2.0f),  // bottom-front
-        cg::Point3(-5.0f, 4.0f, -2.0f),   // top-front
-        cg::Point3(-5.0f, 4.0f, 8.0f));   // top-back (reversed for normal toward +X)
-    left_wall_material->add_child(std::static_pointer_cast<cg::SceneNode>(left_wall));
-    walls_aabb->add_child(left_wall_material);
-
-    scene_node->add_child(walls_aabb);
-
-    // ========== TRIANGLE MESH OBJECTS + GREEN SPHERE (wrapped in AABB) ==========
-    // All meshes and the green sphere are wrapped in a parent AABBNode for hierarchical culling
-    // Green sphere at (0,0,3) r=0.4 falls within these bounds
-
-    // Create parent bounding box that encompasses all mesh objects and green sphere
-    auto mesh_bounding_box = std::make_shared<cg::AABBNode>();
-    mesh_bounding_box->set(
-        cg::Point3(-5.0f, -1.5f, 1.0f),   // min corner
-        cg::Point3(4.0f, 1.0f, 8.0f)      // max corner
-    );
-
-    // Add green sphere to this group (it's spatially within these bounds)
-    mesh_bounding_box->add_child(green_material);
-
-    // Mesh 1: Yellow pyramid - defined at origin, transformed to position
-    // Rough gold metallic - low shininess gives high roughness in Cook-Torrance,
-    // producing a broad, soft specular highlight (vs. Phong's sharp falloff)
-    auto pyramid_material = std::make_shared<cg::MaterialNode>();
-    pyramid_material->set_ambient_and_diffuse(cg::Color4(0.9f, 0.8f, 0.1f, 1.0f));
-    pyramid_material->set_specular(cg::Color4(0.8f, 0.7f, 0.3f, 1.0f));  // Gold-tinted specular (metallic)
-    pyramid_material->set_shininess(8.0f);  // Low shininess = high roughness for Cook-Torrance
-
-    // Unit pyramid centered at origin with base at y=0 and apex at y=1
-    std::vector<cg::Point3> pyramid_verts = {
+    std::vector<cg::Point3> verts = {
         cg::Point3(-0.5f, 0.0f, -0.5f),   // 0: base front-left
         cg::Point3( 0.5f, 0.0f, -0.5f),   // 1: base front-right
         cg::Point3( 0.5f, 0.0f,  0.5f),   // 2: base back-right
         cg::Point3(-0.5f, 0.0f,  0.5f),   // 3: base back-left
         cg::Point3( 0.0f, 1.0f,  0.0f)    // 4: apex
     };
-    std::vector<uint16_t> pyramid_faces = {
-        // 4 triangular sides (CCW winding for outward normals)
-        1, 0, 4,  // front face
-        2, 1, 4,  // right face
-        3, 2, 4,  // back face
-        0, 3, 4,  // left face
-        // base (2 triangles, CCW from below)
-        0, 1, 2,  0, 2, 3
+    std::vector<uint16_t> faces = {
+        1, 0, 4,   // front side
+        2, 1, 4,   // right side
+        3, 2, 4,   // back side
+        0, 3, 4,   // left side
+        0, 1, 2,  0, 2, 3  // base
     };
-    auto pyramid_mesh = std::make_shared<cg::RTMeshNode>(pyramid_verts, pyramid_faces);
+    return std::make_shared<cg::RTMeshNode>(verts, faces);
+}
 
-    // Transform: scale by 1.5, rotate 15 degrees, translate to (-2.5, -1, 2.5)
-    auto pyramid_transform = std::make_shared<cg::RTTransformNode>();
-    pyramid_transform->translate(-2.5f, -1.0f, 2.5f);
-    pyramid_transform->rotate_y(15.0f);
-    pyramid_transform->scale(1.5f, 1.5f, 1.5f);
-    pyramid_transform->add_child(pyramid_mesh);
-    pyramid_material->add_child(pyramid_transform);
-    mesh_bounding_box->add_child(pyramid_material);  // Add to bounding box instead of scene
-
-    // Mesh 2: Cyan box/cube - reflective, defined at origin, transformed to position
-    auto box_material = std::make_shared<cg::MaterialNode>();
-    box_material->set_ambient_and_diffuse(cg::Color4(0.1f, 0.5f, 0.5f, 1.0f));
-    box_material->set_specular(cg::Color4(0.8f, 0.8f, 0.8f, 1.0f));
-    box_material->set_shininess(64.0f);
-    box_material->set_global_reflectivity(0.3f, 0.3f, 0.3f);
-
-    // Unit cube centered at origin from -0.5 to 0.5
-    std::vector<cg::Point3> box_verts = {
-        cg::Point3(-0.5f, -0.5f, -0.5f),  // 0: front-bottom-left
-        cg::Point3( 0.5f, -0.5f, -0.5f),  // 1: front-bottom-right
-        cg::Point3( 0.5f,  0.5f, -0.5f),  // 2: front-top-right
-        cg::Point3(-0.5f,  0.5f, -0.5f),  // 3: front-top-left
-        cg::Point3(-0.5f, -0.5f,  0.5f),  // 4: back-bottom-left
-        cg::Point3( 0.5f, -0.5f,  0.5f),  // 5: back-bottom-right
-        cg::Point3( 0.5f,  0.5f,  0.5f),  // 6: back-top-right
-        cg::Point3(-0.5f,  0.5f,  0.5f)   // 7: back-top-left
+// Helper: build a unit cube mesh (12 triangles, 6 faces)
+static std::shared_ptr<cg::RTMeshNode> make_cube()
+{
+    std::vector<cg::Point3> verts = {
+        cg::Point3(-0.5f, -0.5f, -0.5f),
+        cg::Point3( 0.5f, -0.5f, -0.5f),
+        cg::Point3( 0.5f,  0.5f, -0.5f),
+        cg::Point3(-0.5f,  0.5f, -0.5f),
+        cg::Point3(-0.5f, -0.5f,  0.5f),
+        cg::Point3( 0.5f, -0.5f,  0.5f),
+        cg::Point3( 0.5f,  0.5f,  0.5f),
+        cg::Point3(-0.5f,  0.5f,  0.5f)
     };
-    std::vector<uint16_t> box_faces = {
-        0, 1, 2,  0, 2, 3,  // front
-        5, 4, 7,  5, 7, 6,  // back
-        4, 0, 3,  4, 3, 7,  // left
-        1, 5, 6,  1, 6, 2,  // right
-        3, 2, 6,  3, 6, 7,  // top
-        4, 5, 1,  4, 1, 0   // bottom
+    std::vector<uint16_t> faces = {
+        0, 3, 2,  0, 2, 1,   // front  (normal -Z)
+        5, 6, 7,  5, 7, 4,   // back   (normal +Z)
+        0, 4, 7,  0, 7, 3,   // left   (normal -X)
+        1, 2, 6,  1, 6, 5,   // right  (normal +X)
+        3, 7, 6,  3, 6, 2,   // top    (normal +Y)
+        0, 1, 5,  0, 5, 4    // bottom (normal -Y)
     };
-    auto box_mesh = std::make_shared<cg::RTMeshNode>(box_verts, box_faces);
+    return std::make_shared<cg::RTMeshNode>(verts, faces);
+}
 
-    // Transform: scale to 0.8, rotate 30 degrees, translate to (2.9, -0.6, 4.4)
-    auto box_transform = std::make_shared<cg::RTTransformNode>();
-    box_transform->translate(2.9f, -0.6f, 4.4f);
-    box_transform->rotate_y(30.0f);
-    box_transform->scale(0.8f, 0.8f, 0.8f);
-    box_transform->add_child(box_mesh);
-    box_material->add_child(box_transform);
-    mesh_bounding_box->add_child(box_material);  // Add to bounding box instead of scene
+std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> camera)
+{
+    // ==========================================================
+    // Scene designed to demonstrate VIEW FRUSTUM CULLING and LOD
+    // Camera: (0, 0.5, -10), looking toward +Z
+    //
+    // LOD demo:
+    //   NearLOD at (0, 0, -2): dist ~8  -> HIGH detail (mesh pyramid, level 0)
+    //   FarLOD  at (0, 0, 10): dist ~20 -> LOW detail  (sphere,      level 1)
+    //
+    // AABB culling demo:
+    //   "VisibleGroup" (x=-3..3, y=-2..2, z=-4..12) - in camera view, rays HIT
+    //   "OffscreenGroup" (x=9..13, y=-2..2, z=-4..5) - far right, rays MISS -> prints RT CULLED
+    // ==========================================================
+    auto scene_node = std::make_shared<cg::SceneNode>();
 
-    // Mesh 3: Purple wedge/ramp - defined at origin, transformed to position
-    auto wedge_material = std::make_shared<cg::MaterialNode>();
-    wedge_material->set_ambient_and_diffuse(cg::Color4(0.6f, 0.2f, 0.6f, 1.0f));
-    wedge_material->set_specular(cg::Color4(0.4f, 0.4f, 0.4f, 1.0f));
-    wedge_material->set_shininess(16.0f);
+    // ---------- FLOOR (large sphere trick, checkerboard) ----------
+    auto floor_mat = std::make_shared<cg::MaterialNode>();
+    floor_mat->set_ambient_and_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
+    floor_mat->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
+    floor_mat->set_shininess(16.0f);
+    auto floor_tex = cg::FunctionalTexture::checkerboard(
+        cg::Color3(0.85f, 0.85f, 0.85f), cg::Color3(0.2f, 0.2f, 0.2f), 1.0f);
+    // Radius 1000, center at y=-1001: surface at y=-1
+    auto floor_sphere = std::make_shared<cg::RTSphereNode>(
+        cg::Point3(0.0f, -1001.0f, 0.0f), 1000.0f);
+    floor_tex->add_child(floor_sphere);
+    floor_mat->add_child(floor_tex);
+    scene_node->add_child(floor_mat);
 
-    // Unit wedge: base from -0.5 to 0.5 in x/z, height 1, slope from front to back
-    std::vector<cg::Point3> wedge_verts = {
-        cg::Point3(-0.5f, 0.0f, -0.5f),   // 0 front-left bottom
-        cg::Point3( 0.5f, 0.0f, -0.5f),   // 1 front-right bottom
-        cg::Point3( 0.5f, 0.0f,  0.5f),   // 2 back-right bottom
-        cg::Point3(-0.5f, 0.0f,  0.5f),   // 3 back-left bottom
-        cg::Point3(-0.5f, 1.0f,  0.5f),   // 4 back-left top
-        cg::Point3( 0.5f, 1.0f,  0.5f)    // 5 back-right top
-    };
-    std::vector<uint16_t> wedge_faces = {
-        // Bottom (facing -Y, CCW from below)
-        0, 1, 2,  0, 2, 3,
-        // Back vertical face (facing +Z, CCW from back)
-        2, 5, 4,  2, 4, 3,
-        // Slope face (facing -Z/+Y, CCW from front-above)
-        1, 0, 4,  1, 4, 5,
-        // Left triangle (facing -X, CCW from left)
-        3, 4, 0,
-        // Right triangle (facing +X, CCW from right)
-        1, 5, 2
-    };
-    auto wedge_mesh = std::make_shared<cg::RTMeshNode>(wedge_verts, wedge_faces);
+    // ---------- VISIBLE GROUP AABB (center of scene) ----------
+    // Wraps the LOD objects + a marble sphere.
+    // Rays from the camera pointing into the scene will HIT this AABB.
+    auto visible_aabb = std::make_shared<cg::AABBNode>();
+    visible_aabb->set_name("VisibleGroup");
+    visible_aabb->set(
+        cg::Point3(-3.0f, -1.5f, -4.0f),
+        cg::Point3( 3.0f,  2.0f, 12.0f));
 
-    // Transform: scale by (1, 1, 2), rotate -20 degrees, translate to (-3.5, -1, 6)
-    auto wedge_transform = std::make_shared<cg::RTTransformNode>();
-    wedge_transform->translate(-3.5f, -1.0f, 6.0f);
-    wedge_transform->rotate_y(-20.0f);
-    wedge_transform->scale(1.0f, 1.0f, 2.0f);
-    wedge_transform->add_child(wedge_mesh);
-    wedge_material->add_child(wedge_transform);
-    mesh_bounding_box->add_child(wedge_material);  // Add to bounding box instead of scene
+    // --- LOD Node 1: NEAR object (dist ~8 from camera -> HIGH detail) ---
+    // High detail: gold pyramid mesh | Low detail: orange sphere
+    // LOD threshold = 11 units: dist 8 uses level 0 (HIGH)
+    auto near_lod = std::make_shared<cg::LODNode>("NearLOD");
+    near_lod->set_position(cg::Point3(0.0f, 0.0f, -2.0f));  // world position for RT distance
 
-    // Add the bounding box (containing all meshes) to the scene
-    scene_node->add_child(mesh_bounding_box);
+    // Level 0 (HIGH): scaled & colored pyramid mesh
+    auto near_high_mat = std::make_shared<cg::MaterialNode>();
+    near_high_mat->set_ambient_and_diffuse(cg::Color4(0.9f, 0.7f, 0.1f, 1.0f));  // gold
+    near_high_mat->set_specular(cg::Color4(1.0f, 0.9f, 0.4f, 1.0f));
+    near_high_mat->set_shininess(32.0f);
+    auto near_high_xform = std::make_shared<cg::RTTransformNode>();
+    near_high_xform->translate(0.0f, -1.0f, -2.0f);
+    near_high_xform->rotate_y(20.0f);
+    near_high_xform->scale(1.2f, 1.8f, 1.2f);
+    near_high_xform->add_child(make_pyramid());
+    near_high_mat->add_child(near_high_xform);
 
-    // Single strong directional light - positioned high and at an angle
-    // so each face of pyramid/wedge receives different illumination
+    // Level 1 (LOW): simple sphere (same position, radius 0.7)
+    auto near_low_mat = std::make_shared<cg::MaterialNode>();
+    near_low_mat->set_ambient_and_diffuse(cg::Color4(0.9f, 0.5f, 0.1f, 1.0f));  // orange
+    near_low_mat->set_specular(cg::Color4(0.6f, 0.6f, 0.6f, 1.0f));
+    near_low_mat->set_shininess(16.0f);
+    auto near_low_sphere = std::make_shared<cg::RTSphereNode>(
+        cg::Point3(0.0f, 0.0f, -2.0f), 0.7f);
+    near_low_mat->add_child(near_low_sphere);
+
+    near_lod->add_level(11.0f, near_high_mat);   // dist <= 11 -> pyramid (HIGH)
+    near_lod->add_level(1e30f, near_low_mat);    // dist >  11 -> sphere  (LOW)
+    visible_aabb->add_child(near_lod);
+
+    // --- LOD Node 2: FAR object (dist ~20 from camera -> LOW detail) ---
+    // High detail: cyan cube mesh | Low detail: blue sphere
+    // LOD threshold = 11: dist 20 uses level 1 (LOW)
+    auto far_lod = std::make_shared<cg::LODNode>("FarLOD");
+    far_lod->set_position(cg::Point3(0.0f, 0.0f, 10.0f));  // world position for RT distance
+
+    // Level 0 (HIGH): reflective cyan cube mesh
+    auto far_high_mat = std::make_shared<cg::MaterialNode>();
+    far_high_mat->set_ambient_and_diffuse(cg::Color4(0.1f, 0.6f, 0.7f, 1.0f));  // cyan
+    far_high_mat->set_specular(cg::Color4(0.8f, 0.8f, 0.8f, 1.0f));
+    far_high_mat->set_shininess(64.0f);
+    far_high_mat->set_global_reflectivity(0.25f, 0.25f, 0.25f);
+    auto far_high_xform = std::make_shared<cg::RTTransformNode>();
+    far_high_xform->translate(0.0f, -0.5f, 10.0f);
+    far_high_xform->rotate_y(35.0f);
+    far_high_xform->scale(1.0f, 1.0f, 1.0f);
+    far_high_xform->add_child(make_cube());
+    far_high_mat->add_child(far_high_xform);
+
+    // Level 1 (LOW): simple sphere
+    auto far_low_mat = std::make_shared<cg::MaterialNode>();
+    far_low_mat->set_ambient_and_diffuse(cg::Color4(0.2f, 0.3f, 0.9f, 1.0f));  // blue
+    far_low_mat->set_specular(cg::Color4(0.5f, 0.5f, 0.5f, 1.0f));
+    far_low_mat->set_shininess(16.0f);
+    auto far_low_sphere = std::make_shared<cg::RTSphereNode>(
+        cg::Point3(0.0f, 0.0f, 10.0f), 0.7f);
+    far_low_mat->add_child(far_low_sphere);
+
+    far_lod->add_level(11.0f, far_high_mat);   // dist <= 11 -> cube   (HIGH)
+    far_lod->add_level(1e30f, far_low_mat);    // dist >  11 -> sphere (LOW)
+    visible_aabb->add_child(far_lod);
+
+    // --- Mirror sphere in the visible group (bonus reflective object) ---
+    auto mirror_mat = std::make_shared<cg::MaterialNode>();
+    mirror_mat->set_ambient_and_diffuse(cg::Color4(0.05f, 0.05f, 0.05f, 1.0f));
+    mirror_mat->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
+    mirror_mat->set_shininess(128.0f);
+    mirror_mat->set_global_reflectivity(0.9f, 0.9f, 0.9f);
+    auto mirror_sphere = std::make_shared<cg::RTSphereNode>(
+        cg::Point3(-1.8f, 0.0f, 3.0f), 0.6f);
+    mirror_mat->add_child(mirror_sphere);
+    visible_aabb->add_child(mirror_mat);
+
+    scene_node->add_child(visible_aabb);
+
+    // ---------- TEST CUBE (winding verification) ----------
+    // Plain green cube placed at (2, -0.5, 2), clearly in view from camera (0, 0.5, -10).
+    // Remove once winding is confirmed correct.
+    auto test_cube_mat = std::make_shared<cg::MaterialNode>();
+    test_cube_mat->set_ambient_and_diffuse(cg::Color4(0.1f, 0.8f, 0.2f, 1.0f));  // green
+    test_cube_mat->set_specular(cg::Color4(0.6f, 0.6f, 0.6f, 1.0f));
+    test_cube_mat->set_shininess(32.0f);
+    auto test_cube_xform = std::make_shared<cg::RTTransformNode>();
+    test_cube_xform->translate(2.0f, -0.5f, 2.0f);
+    test_cube_xform->rotate_y(25.0f);
+    test_cube_xform->scale(0.8f, 0.8f, 0.8f);
+    test_cube_xform->add_child(make_cube());
+    test_cube_mat->add_child(test_cube_xform);
+    scene_node->add_child(test_cube_mat);
+
+    // ---------- OFF-SCREEN GROUP AABB (far right, culling demo) ----------
+    // This group sits well outside the camera's main view.
+    // Most rays will miss its AABB -> "RT CULLED (AABB): OffscreenGroup" printed.
+    auto offscreen_aabb = std::make_shared<cg::AABBNode>();
+    offscreen_aabb->set_name("OffscreenGroup");
+    offscreen_aabb->set(
+        cg::Point3(9.0f, -1.5f, -4.0f),
+        cg::Point3(13.0f, 2.0f,  5.0f));
+
+    // Red sphere - rarely visible but inside the AABB
+    auto red_mat = std::make_shared<cg::MaterialNode>();
+    red_mat->set_ambient_and_diffuse(cg::Color4(0.8f, 0.15f, 0.15f, 1.0f));
+    red_mat->set_specular(cg::Color4(0.6f, 0.6f, 0.6f, 1.0f));
+    red_mat->set_shininess(32.0f);
+    auto red_sphere = std::make_shared<cg::RTSphereNode>(
+        cg::Point3(11.0f, 0.0f, 0.0f), 0.8f);
+    red_mat->add_child(red_sphere);
+    offscreen_aabb->add_child(red_mat);
+
+    // Purple sphere beside the red one
+    auto purple_mat = std::make_shared<cg::MaterialNode>();
+    purple_mat->set_ambient_and_diffuse(cg::Color4(0.5f, 0.1f, 0.7f, 1.0f));
+    purple_mat->set_specular(cg::Color4(0.4f, 0.4f, 0.4f, 1.0f));
+    purple_mat->set_shininess(16.0f);
+    auto purple_sphere = std::make_shared<cg::RTSphereNode>(
+        cg::Point3(11.0f, 0.0f, 3.0f), 0.8f);
+    purple_mat->add_child(purple_sphere);
+    offscreen_aabb->add_child(purple_mat);
+
+    scene_node->add_child(offscreen_aabb);
+
+    // ---------- LIGHT ----------
     auto light = std::make_shared<cg::LightNode>(0);
-    light->set_position(cg::HPoint3(4.0f, 6.0f, -1.0f, 1.0f));  // High, front-right
-    light->set_diffuse(cg::Color4(1.2f, 1.2f, 1.1f, 1.0f));     // Strong white light (>1 for intensity)
+    light->set_position(cg::HPoint3(3.0f, 8.0f, -4.0f, 1.0f));   // high, slightly in front
+    light->set_diffuse(cg::Color4(1.2f, 1.2f, 1.1f, 1.0f));
     light->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
     light->enable();
     scene_node->add_child(light);
@@ -399,6 +349,10 @@ void display()
     int32_t num_threads = std::thread::hardware_concurrency() - 1;
     num_threads = num_threads > 0 ? num_threads : 1;
 
+    // Reset culling/LOD print throttles so each render shows fresh output
+    cg::AABBNode::reset_rt_print_count();
+    cg::LODNode::reset_rt_print_count();
+
     // Clear the memory framebuffer
     g_frame_buffer->clear();
 
@@ -434,6 +388,10 @@ void display()
  */
 void display()
 {
+    // Reset culling/LOD print throttles so each render shows fresh output
+    cg::AABBNode::reset_rt_print_count();
+    cg::LODNode::reset_rt_print_count();
+
     // Clear the memory framebuffer
     g_frame_buffer->clear();
 
@@ -637,8 +595,9 @@ int main(int argc, char **argv)
     g_camera = std::make_shared<cg::CameraNode>();
 
     // Initialize camera position and orientation
-    // Move camera much further back to see the sphere better
-    g_camera->set_position_and_look_at_pt(cg::Point3(7.0f, 0.5f, -5.0f), cg::Point3(0.0f, 0.0f, 0.0f));
+    // Camera at (0, 0.5, -10), looking toward the scene center.
+    // NearLOD (~8 units away) -> HIGH detail; FarLOD (~20 units away) -> LOW detail.
+    g_camera->set_position_and_look_at_pt(cg::Point3(0.0f, 0.5f, -10.0f), cg::Point3(0.0f, 0.0f, 3.0f));
     g_camera->set_view_up(cg::Vector3(0.0f, 1.0f, 0.0f));  // Y is up
     // Initialize view volume for ray tracing
     g_camera->set_view_volume(

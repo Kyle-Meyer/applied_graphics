@@ -1,15 +1,27 @@
 #include "scene/bounding_aabb_node.hpp"
 
+#include <atomic>
 #include <iostream>
 
 namespace cg
 {
+
+namespace
+{
+std::atomic<int> s_rt_cull_prints{0};
+constexpr int    MAX_RT_CULL_PRINTS = 10;
+} // namespace
 
 AABBNode::AABBNode() : BoundingNode() {}
 
 AABBNode::~AABBNode() {}
 
 void AABBNode::set(const Point3 &min_pt, const Point3 &max_pt) { box_.update(min_pt, max_pt); }
+
+void AABBNode::reset_rt_print_count()
+{
+    s_rt_cull_prints.store(0, std::memory_order_relaxed);
+}
 
 void AABBNode::draw(SceneState &scene_state)
 {
@@ -33,11 +45,23 @@ void AABBNode::update(SceneState &scene_state)
 void AABBNode::find_closest_intersect(Ray3 ray, SceneState &current_state, SceneState &closest)
 {
     // Test ray against bounding box - if miss, skip all children
-    // First hit speedup: also skip if box entry is beyond current closest hit
     RayObjectIntersectResult result = ray.intersect(box_);
     if (!result.intersects || result.distance > closest.t_min)
     {
-        return;  // Ray misses bounding box or box is farther than closest hit
+        if (!result.intersects)
+        {
+            // Ray completely missed this bounding volume - print culling event (throttled)
+            int n = s_rt_cull_prints.fetch_add(1, std::memory_order_relaxed);
+            if (n < MAX_RT_CULL_PRINTS)
+            {
+                std::cout << "RT CULLED (AABB): " << name_ << std::endl;
+            }
+            else if (n == MAX_RT_CULL_PRINTS)
+            {
+                std::cout << "(AABB RT cull print limit reached - suppressing further output)\n";
+            }
+        }
+        return;
     }
 
     // Ray hits bounding box - traverse children to find actual intersections

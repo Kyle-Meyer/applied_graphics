@@ -2,6 +2,8 @@
 #define __SCENE_LOD_NODE_HPP__
 
 #include "scene/scene_node.hpp"
+#include "geometry/point3.hpp"
+#include "geometry/ray3.hpp"
 
 #include <vector>
 
@@ -42,14 +44,37 @@ class LODNode : public SceneNode
     void add_level(float max_distance, std::shared_ptr<SceneNode> node);
 
     /**
+     * Set the world-space reference position used for ray-tracing LOD distance.
+     * Should match the object's world-space position after transforms.
+     */
+    void set_position(const Point3 &pos);
+
+    /**
      * Select and draw the appropriate detail level based on camera distance.
      */
     void draw(SceneState &scene_state) override;
 
+    /**
+     * Ray tracing: select LOD level by distance from ray origin to position_,
+     * then delegate intersection test to that level's geometry.
+     */
+    void find_closest_intersect(Ray3 ray, SceneState &current_state, SceneState &closest) override;
+
+    /**
+     * Ray tracing shadow test: same LOD selection, early-exit version.
+     */
+    bool does_intersect_exist(Ray3 ray, float d, SceneState &current_state) override;
+
+    /**
+     * Reset the per-render print throttle. Call once at the start of each render.
+     */
+    static void reset_rt_print_count();
+
   private:
     std::vector<LODLevel> levels_;
+    Point3                position_;  // World-space reference for RT distance
 
-    // Compute distance from camera to this node's world-space origin.
+    // Compute distance from camera to this node's world-space origin (draw path).
     float compute_distance(const SceneState &state) const;
 
     // Return the index into levels_ appropriate for the given distance.

@@ -57,6 +57,11 @@ class AABBNode : public BoundingNode
 
     bool does_intersect_exist(Ray3 ray, float d, SceneState &current_state) override;
 
+    /**
+     * Reset the per-render RT culling print throttle. Call once at the start of each render.
+     */
+    static void reset_rt_print_count();
+
   protected:
     AABB box_;
 };
