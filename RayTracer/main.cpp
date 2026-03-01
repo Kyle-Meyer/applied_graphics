@@ -25,6 +25,7 @@
 #include "RayTracer/rt_mesh_node.hpp"
 #include "RayTracer/rt_transform_node.hpp"
 #include "scene/bounding_aabb_node.hpp"
+#include "scene/bezier_patch.hpp"
 #include "scene/lod_node.hpp"
 
 #include <chrono>
@@ -114,6 +115,20 @@ static std::shared_ptr<cg::RTMeshNode> make_cube()
         3, 7, 6,  3, 6, 2,   // top    (normal +Y)
         0, 1, 5,  0, 5, 4    // bottom (normal -Y)
     };
+    return std::make_shared<cg::RTMeshNode>(verts, faces);
+}
+
+/**
+ * Build an RTMeshNode from a tessellated Bezier patch at the given subdivision level.
+ * @param cp           4x4 control points (row-major: cp[i*4+j] = P(u_i, v_j))
+ * @param subdivisions Number of quad divisions per parametric axis
+ */
+static std::shared_ptr<cg::RTMeshNode>
+make_bezier_patch_mesh(const std::array<cg::Point3, 16> &cp, uint32_t subdivisions)
+{
+    std::vector<cg::VertexAndNormal> verts;
+    std::vector<uint16_t>            faces;
+    cg::BezierPatchSurface::tessellate(cp, subdivisions, verts, faces);
     return std::make_shared<cg::RTMeshNode>(verts, faces);
 }
 
@@ -277,6 +292,52 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     offscreen_aabb->add_child(purple_mat);
 
     scene_node->add_child(offscreen_aabb);
+
+    // ---------- BEZIER PATCH (parametric surface with LOD) ----------
+    // Control points orient the dome in +Y (upward) to match the scene's Y-up
+    // convention.  u varies in Z, v varies in X, height is Y.
+    // With this layout dS/du x dS/dv points in +Y so normals face the camera.
+    //
+    // LOD levels (distance from camera ~8.5 to world-centre (0, 0, 4)):
+    //   HIGH (16 subdivs) – distance <= 11
+    //   LOW  ( 4 subdivs) – distance >  11
+    const std::array<cg::Point3, 16> patch_cp = {{
+        // i=0 (u=0): z=-1.5
+        {-1.5f, 0.0f, -1.5f}, {-0.5f, 0.0f, -1.5f}, { 0.5f, 0.0f, -1.5f}, { 1.5f, 0.0f, -1.5f},
+        // i=1 (u=1/3): z=-0.5
+        {-1.5f, 0.5f, -0.5f}, {-0.5f, 2.0f, -0.5f}, { 0.5f, 2.0f, -0.5f}, { 1.5f, 0.5f, -0.5f},
+        // i=2 (u=2/3): z=+0.5
+        {-1.5f, 0.5f,  0.5f}, {-0.5f, 2.0f,  0.5f}, { 0.5f, 2.0f,  0.5f}, { 1.5f, 0.5f,  0.5f},
+        // i=3 (u=1): z=+1.5
+        {-1.5f, 0.0f,  1.5f}, {-0.5f, 0.0f,  1.5f}, { 0.5f, 0.0f,  1.5f}, { 1.5f, 0.0f,  1.5f},
+    }};
+
+    // Teal material for the patch
+    auto patch_mat = std::make_shared<cg::MaterialNode>();
+    patch_mat->set_ambient_and_diffuse(cg::Color4(0.1f, 0.6f, 0.6f, 1.0f));
+    patch_mat->set_specular(cg::Color4(0.7f, 0.9f, 0.9f, 1.0f));
+    patch_mat->set_shininess(48.0f);
+
+    // Place the patch to the right of the yellow pyramid (pyramid is at (0,-1,-2)).
+    // Scale 0.7 keeps it a similar size to the pyramid.
+    auto patch_xform_high = std::make_shared<cg::RTTransformNode>();
+    patch_xform_high->translate(2.5f, -1.0f, -2.0f);
+    patch_xform_high->scale(0.7f, 0.7f, 0.7f);
+    patch_xform_high->add_child(make_bezier_patch_mesh(patch_cp, 16));
+
+    auto patch_xform_low = std::make_shared<cg::RTTransformNode>();
+    patch_xform_low->translate(2.5f, -1.0f, -2.0f);
+    patch_xform_low->scale(0.7f, 0.7f, 0.7f);
+    patch_xform_low->add_child(make_bezier_patch_mesh(patch_cp, 4));
+
+    // Camera (0, 0.5, -10) to (2.5, -1, -2) ≈ 8.5 → HIGH detail
+    auto patch_lod = std::make_shared<cg::LODNode>("BezierPatch");
+    patch_lod->set_position(cg::Point3(2.5f, -1.0f, -2.0f));
+    patch_lod->add_level(11.0f, patch_xform_high);   // HIGH when close
+    patch_lod->add_level(1e30f, patch_xform_low);    // LOW  when far
+
+    patch_mat->add_child(patch_lod);
+    scene_node->add_child(patch_mat);
 
     // ---------- LIGHT ----------
     auto light = std::make_shared<cg::LightNode>(0);
