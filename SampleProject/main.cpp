@@ -23,6 +23,7 @@
 #include "SampleProject/shader_src.hpp"
 #include "scene/bounding_aabb_node.hpp"
 #include "scene/bounding_sphere_node.hpp"
+#include "scene/bezier_patch.hpp"
 #include "scene/lod_node.hpp"
 
 #include <chrono>
@@ -304,6 +305,13 @@ cg::EventType handle_key_event(const SDL_Event &event)
         case SDLK_6:
             g_camera->set_position_and_look_at_pt(cg::Point3(-10.0f, 45.0f, 35.0f),
                                                   cg::Point3(-85.0f, 105.0f, 10.0f));
+            result = cg::EventType::REDRAW;
+            break;
+
+        // Look at the Bezier patch (close up – high LOD)
+        case SDLK_7:
+            g_camera->set_position_and_look_at_pt(cg::Point3(20.0f, -20.0f, 40.0f),
+                                                  cg::Point3(20.0f,  30.0f,  8.0f));
             result = cg::EventType::REDRAW;
             break;
 
@@ -685,6 +693,73 @@ std::shared_ptr<cg::SceneNode> construct_shiny_torus(int32_t position_loc, int32
 }
 
 /**
+ * Construct a bicubic Bezier patch with 3 LOD levels.
+ *
+ * The control points define a "pillow" surface: flat at the four corners and
+ * rising to a dome in the centre.  Three BezierPatchSurface meshes are
+ * generated at different tessellation levels and attached to a LODNode so
+ * that the GPU workload drops as the camera moves away:
+ *
+ *   High   (16 subdivs) – distance <= 50
+ *   Medium  (8 subdivs) – distance <= 100
+ *   Low     (4 subdivs) – distance >  100
+ */
+std::shared_ptr<cg::SceneNode> construct_bezier_patch(int32_t position_loc, int32_t normal_loc)
+{
+    // 4x4 control points (row-major: cp[i*4+j] = P(u_i, v_j)).
+    // x/y span [-1.5, 1.5], z rises from 0 at corners to 2 at the interior
+    // knots – a classic "pillow" Bezier patch.
+    const std::array<cg::Point3, 16> cp = {{
+        // i=0 (u=0)
+        {-1.5f, -1.5f, 0.0f}, {-1.5f, -0.5f, 0.5f}, {-1.5f,  0.5f, 0.5f}, {-1.5f,  1.5f, 0.0f},
+        // i=1 (u=1/3)
+        {-0.5f, -1.5f, 0.5f}, {-0.5f, -0.5f, 2.0f}, {-0.5f,  0.5f, 2.0f}, {-0.5f,  1.5f, 0.5f},
+        // i=2 (u=2/3)
+        { 0.5f, -1.5f, 0.5f}, { 0.5f, -0.5f, 2.0f}, { 0.5f,  0.5f, 2.0f}, { 0.5f,  1.5f, 0.5f},
+        // i=3 (u=1)
+        { 1.5f, -1.5f, 0.0f}, { 1.5f, -0.5f, 0.5f}, { 1.5f,  0.5f, 0.5f}, { 1.5f,  1.5f, 0.0f},
+    }};
+
+    // Three tessellation levels – same control points, different subdivision counts
+    auto patch_high = std::make_shared<cg::BezierPatchSurface>(cp, 16, position_loc, normal_loc);
+    auto patch_mid  = std::make_shared<cg::BezierPatchSurface>(cp,  8, position_loc, normal_loc);
+    auto patch_low  = std::make_shared<cg::BezierPatchSurface>(cp,  4, position_loc, normal_loc);
+
+    // LOD node selects the level based on camera distance
+    auto lod = std::make_shared<cg::LODNode>("BezierPatch");
+    lod->add_level( 50.0f,                            patch_high);
+    lod->add_level(100.0f,                            patch_mid);
+    lod->add_level(std::numeric_limits<float>::max(), patch_low);
+
+    // Teal/cyan material
+    auto mat = std::make_shared<cg::PresentationNode>(cg::Color4(0.05f, 0.2f, 0.2f),
+                                                      cg::Color4(0.1f,  0.7f, 0.7f),
+                                                      cg::Color4(0.6f,  0.8f, 0.8f),
+                                                      cg::Color4(0.0f,  0.0f, 0.0f),
+                                                      48.0f);
+    mat->add_child(lod);
+
+    // Scale up from the [-1.5, 1.5] local domain and position in the room.
+    // Placed at roughly (20, 30) in the room, sitting on the floor (z=0).
+    auto xform = std::make_shared<cg::TransformNode>();
+    xform->translate(20.0f, 30.0f, 0.0f);
+    xform->scale(8.0f, 8.0f, 8.0f);
+    xform->add_child(mat);
+
+    // Wrap in a bounding sphere for frustum culling.
+    // Scaled patch spans ~24 x 24 x 16 – a sphere of radius ~20 centred
+    // at the scaled origin covers it comfortably.
+    auto bv = std::make_shared<cg::BoundingSphereNode>();
+    bv->set_name("BezierPatch");
+    bv->set_bounding_sphere(cg::BoundingSphere(cg::Point3(20.0f, 30.0f, 8.0f), 22.0f));
+    bv->add_child(xform);
+
+    auto patch_root = std::make_shared<cg::SceneNode>();
+    patch_root->add_child(bv);
+    return patch_root;
+}
+
+/**
  * Construct lighting for this scene. Note that it is hard coded
  * into the shader node for this exercise.
  * @param  lighting  Pointer to the lighting shader node.
@@ -865,6 +940,9 @@ void construct_scene()
     // Sphere
     auto globe = construct_globe(position_loc, normal_loc, texture_loc);
 
+    // Bezier patch (parametric surface with LOD)
+    auto bezier_patch = construct_bezier_patch(position_loc, normal_loc);
+
     // Torus
     // auto shiny_torus = construct_shiny_torus(position_loc, normal_loc);
 
@@ -936,6 +1014,9 @@ void construct_scene()
     painting_aabb->set(cg::Point3(33.0f, 97.0f, 27.0f), cg::Point3(67.0f, 101.0f, 53.0f));
     myscene->add_child(painting_aabb);
     painting_aabb->add_child(painting);
+
+    // ========== Bezier patch (parametric surface, LOD) ==========
+    myscene->add_child(bezier_patch);
 }
 
 /**
@@ -961,6 +1042,7 @@ int main(int argc, char **argv)
     std::cout << "4 - Look at Sphere\n";
     std::cout << "5 - Look at Painting\n";
     std::cout << "6 - Look at Coca-cola Can\n";
+    std::cout << "7 - Look at Bezier Patch (close - high LOD)\n";
     std::cout << "ESC - Exit Program\n";
 
     // Initialize SDL
