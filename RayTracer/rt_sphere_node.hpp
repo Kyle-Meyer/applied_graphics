@@ -57,6 +57,11 @@ class RTSphereNode : public GeometryNode
     Point2 get_texture_coord(const Point3 &int_pt) override;
 
     /**
+     * Update the sphere center (used for animation).
+     */
+    void set_center(const Point3 &c) { sphere_.center = c; }
+
+    /**
      * Ray tracing intersect method
      */
     void find_closest_intersect(Ray3 ray, SceneState &current_state, SceneState &closest) override;

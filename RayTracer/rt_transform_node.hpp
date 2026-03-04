@@ -40,6 +40,12 @@ class RTTransformNode : public TransformNode
     void prepare_for_ray_tracing();
 
     /**
+     * Mark cached matrices as stale so they are recomputed on next use.
+     * Call this after modifying the node's transform for animation.
+     */
+    void invalidate_cache() { matrices_cached_ = false; }
+
+    /**
      * Find closest intersection. Transforms the ray to object space,
      * tests children, and stores inverse matrices for later normal transformation.
      * @param ray            The ray (in world space)

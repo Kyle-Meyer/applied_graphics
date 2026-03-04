@@ -26,6 +26,7 @@
 #include "RayTracer/rt_transform_node.hpp"
 #include "scene/bounding_aabb_node.hpp"
 #include "scene/bezier_patch.hpp"
+#include "scene/bezier_curve.hpp"
 #include "scene/lod_node.hpp"
 
 #include <chrono>
@@ -72,6 +73,20 @@ std::vector<cg::LightNode *> g_lights;
 
 // Scene construction
 std::shared_ptr<cg::SceneNode> g_scene_root;
+
+// ---------- Bezier curve animation state ----------
+// Control points for a cubic Bezier arc through the scene (Y-up, camera looks toward +Z)
+static const cg::Point3 CURVE_P0(-1.5f,  0.5f,  0.0f);
+static const cg::Point3 CURVE_P1(-0.5f,  2.0f,  3.0f);
+static const cg::Point3 CURVE_P2( 0.5f,  2.0f,  6.0f);
+static const cg::Point3 CURVE_P3( 1.5f,  0.5f,  9.0f);
+constexpr int CURVE_STEPS = 60;
+
+// BezierCurve drives the animated sphere via forward differencing
+std::unique_ptr<cg::BezierCurve> g_bezier_curve;
+
+// Pointer to the animated sphere so we can move it with set_center() each step
+cg::RTSphereNode *g_anim_sphere = nullptr;
 
 // Helper: build a unit pyramid mesh (4 triangular sides + base)
 // Base at y=0, apex at y=1, footprint -0.5..0.5 in x/z
@@ -339,6 +354,46 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     patch_mat->add_child(patch_lod);
     scene_node->add_child(patch_mat);
 
+    // ---------- BEZIER CURVE ANIMATION (parametric curve, forward differencing) ----------
+    // Small grey marker spheres at evenly-spaced t values visualise the path.
+    // One bright orange sphere sits at the current curve position (advanced with 'N').
+    //
+    // The curve sweeps from close-right to far-left in world space:
+    //   P0 (-1.5, 0.5, 0.0) → P1 (-0.5, 2.0, 3.0) → P2 (0.5, 2.0, 6.0) → P3 (1.5, 0.5, 9.0)
+    // (screen-right = -X, so P0 appears on screen-right and P3 on screen-left)
+    {
+        // --- Marker spheres (7 samples: t = 0, 1/6 ... 1) ---
+        auto marker_mat = std::make_shared<cg::MaterialNode>();
+        marker_mat->set_ambient_and_diffuse(cg::Color4(0.6f, 0.7f, 0.8f, 1.0f));
+        marker_mat->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
+        marker_mat->set_shininess(8.0f);
+
+        constexpr int MARKERS = 7;
+        for(int i = 0; i < MARKERS; ++i)
+        {
+            float      t   = static_cast<float>(i) / static_cast<float>(MARKERS - 1);
+            cg::Point3 pos = cg::BezierCurve::evaluate(t, CURVE_P0, CURVE_P1, CURVE_P2, CURVE_P3);
+            marker_mat->add_child(
+                std::make_shared<cg::RTSphereNode>(pos, 0.06f));
+        }
+        scene_node->add_child(marker_mat);
+
+        // --- Animated sphere (starts at P0, moved with 'N') ---
+        // RTSphereNode stores world-space coordinates directly — no transform wrapper needed.
+        auto anim_mat = std::make_shared<cg::MaterialNode>();
+        anim_mat->set_ambient_and_diffuse(cg::Color4(0.9f, 0.5f, 0.05f, 1.0f)); // orange
+        anim_mat->set_specular(cg::Color4(1.0f, 0.8f, 0.4f, 1.0f));
+        anim_mat->set_shininess(48.0f);
+
+        cg::Point3 init_pos = g_bezier_curve->current_point();
+        auto anim_sphere = std::make_shared<cg::RTSphereNode>(init_pos, 0.18f);
+        anim_mat->add_child(anim_sphere);
+        scene_node->add_child(anim_mat);
+
+        // Expose sphere so handle_key_event can call set_center() each step
+        g_anim_sphere = anim_sphere.get();
+    }
+
     // ---------- LIGHT ----------
     auto light = std::make_shared<cg::LightNode>(0);
     light->set_position(cg::HPoint3(3.0f, 8.0f, -4.0f, 1.0f));   // high, slightly in front
@@ -549,6 +604,22 @@ cg::EventType handle_key_event(const SDL_Event &event)
             result = cg::EventType::REDRAW;
             break;
 
+        // Advance Bezier curve one step (forward differencing) and re-render
+        case SDLK_N:
+            if(g_bezier_curve && g_anim_sphere)
+            {
+                g_bezier_curve->step();
+                if(g_bezier_curve->is_done()) g_bezier_curve->reset();
+
+                cg::Point3 pos = g_bezier_curve->current_point();
+                g_anim_sphere->set_center(pos);
+
+                std::cout << "Bezier step " << g_bezier_curve->total_steps()
+                          << "  pos = (" << pos.x << ", " << pos.y << ", " << pos.z << ")\n";
+                result = cg::EventType::REDRAW;
+            }
+            break;
+
         default: break;
     }
 
@@ -601,6 +672,7 @@ int main(int argc, char **argv)
     std::cout << "p,P - Change camera pitch\n";
     std::cout << "h,H - Change camera heading\n";
     std::cout << "a   - Toggle anti-aliasing\n";
+    std::cout << "n   - Advance Bezier curve one step (forward differencing)\n";
 
     // Initialize SDL
     if(!SDL_Init(SDL_INIT_VIDEO))
@@ -663,6 +735,11 @@ int main(int argc, char **argv)
     // Initialize view volume for ray tracing
     g_camera->set_view_volume(
         g_image_width, g_image_height, g_field_of_view, g_near_plane_distance, g_far_plane_distance);
+
+    // Initialise Bezier curve (forward-difference state) before scene construction
+    // so construct_scene() can read the initial position for the animated sphere.
+    g_bezier_curve = std::make_unique<cg::BezierCurve>(
+        CURVE_P0, CURVE_P1, CURVE_P2, CURVE_P3, CURVE_STEPS);
 
     // Construct the scene, pass in the camera node to add to the root node.
     auto scene_root = construct_scene(g_camera);
