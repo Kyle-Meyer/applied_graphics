@@ -24,7 +24,9 @@
 #include "scene/bounding_aabb_node.hpp"
 #include "scene/bounding_sphere_node.hpp"
 #include "scene/bezier_patch.hpp"
+#include "scene/bezier_path_node.hpp"
 #include "scene/lod_node.hpp"
+#include "scene/sphere_section.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -760,6 +762,55 @@ std::shared_ptr<cg::SceneNode> construct_bezier_patch(int32_t position_loc, int3
 }
 
 /**
+ * Construct a Bezier curve path with an animated sphere.
+ *
+ * The curve sweeps an arch across the room — low at the sides, elevated in
+ * the middle — so it is visible from the default camera position.
+ *
+ *   P0 (-50,  10,  5)  – left, near floor
+ *   P1 (-20,  50, 35)  – left-centre, elevated
+ *   P2 ( 20,  50, 35)  – right-centre, elevated
+ *   P3 ( 50,  10,  5)  – right, near floor
+ */
+std::shared_ptr<cg::SceneNode> construct_bezier_path(int32_t position_loc, int32_t normal_loc)
+{
+    cg::Point3 p0(-50.0f, 10.0f,  5.0f);
+    cg::Point3 p1(-20.0f, 50.0f, 35.0f);
+    cg::Point3 p2( 20.0f, 50.0f, 35.0f);
+    cg::Point3 p3( 50.0f, 10.0f,  5.0f);
+    constexpr int STEPS = 80;
+
+    // BezierPathNode: renders the polyline and animates children along it
+    auto path = std::make_shared<cg::BezierPathNode>(p0, p1, p2, p3, STEPS,
+                                                     position_loc, normal_loc);
+
+    // Yellow-gold line material
+    auto line_mat = std::make_shared<cg::PresentationNode>(
+        cg::Color4(0.3f, 0.25f, 0.0f),
+        cg::Color4(0.9f,  0.75f, 0.1f),
+        cg::Color4(0.5f,  0.5f,  0.3f),
+        cg::Color4(0.0f,  0.0f,  0.0f),
+        32.0f);
+    line_mat->add_child(path);
+
+    // Bright orange animated sphere
+    auto sphere_mat = std::make_shared<cg::PresentationNode>(
+        cg::Color4(0.4f, 0.1f, 0.0f),
+        cg::Color4(1.0f, 0.4f, 0.05f),
+        cg::Color4(0.8f, 0.8f, 0.5f),
+        cg::Color4(0.0f, 0.0f, 0.0f),
+        64.0f);
+    auto sphere_xfrm = std::make_shared<cg::TransformNode>();
+    sphere_xfrm->scale(3.0f, 3.0f, 3.0f);
+    auto sphere_geo = std::make_shared<cg::SphereSection>(-90.0f, 90.0f, 9, -180.0f, 180.0f, 18, 1.0f, position_loc, normal_loc);
+    add_sub_tree(path, sphere_mat, sphere_xfrm, sphere_geo);
+
+    auto root = std::make_shared<cg::SceneNode>();
+    root->add_child(line_mat);
+    return root;
+}
+
+/**
  * Construct lighting for this scene. Note that it is hard coded
  * into the shader node for this exercise.
  * @param  lighting  Pointer to the lighting shader node.
@@ -943,6 +994,9 @@ void construct_scene()
     // Bezier patch (parametric surface with LOD)
     auto bezier_patch = construct_bezier_patch(position_loc, normal_loc);
 
+    // Bezier curve path with animated sphere (forward differencing)
+    auto bezier_path = construct_bezier_path(position_loc, normal_loc);
+
     // Torus
     // auto shiny_torus = construct_shiny_torus(position_loc, normal_loc);
 
@@ -1017,6 +1071,9 @@ void construct_scene()
 
     // ========== Bezier patch (parametric surface, LOD) ==========
     myscene->add_child(bezier_patch);
+
+    // ========== Bezier curve path (forward differencing animation) ==========
+    myscene->add_child(bezier_path);
 }
 
 /**
@@ -1132,14 +1189,11 @@ int main(int argc, char **argv)
         if(g_animate)
         {
             update_view(g_mouse_x, g_mouse_y, g_forward);
-            update_spotlight();
-            display();
         }
-        else if(event_result & cg::EventType::REDRAW)
-        {
-            update_spotlight();
-            display();
-        }
+
+        // Always redraw to keep the Bezier curve animation running
+        update_spotlight();
+        display();
 
         sleep(DRAW_INTERVAL_MILLIS);
     }
