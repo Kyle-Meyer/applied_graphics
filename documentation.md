@@ -52,11 +52,11 @@ Executables land in `build/`:
 
 **Files:** `scene/view_frustum.hpp`, `scene/view_frustum.cpp`
 
-The `ViewFrustum` class extracts the six frustum planes from the combined view-projection matrix using the Gribb-Hartmann method and tests geometry against them.
+The `ViewFrustum` class extracts the six frustum planes from the combined view-projection matrix using the Gribb Hartmann method and tests geometry against them.
 
 ### Plane Extraction
 
-Given the combined view-projection matrix M (rows r0..r3), the six planes are:
+Given the combined view projection matrix M (rows r0..r3), the six planes are:
 
 | Plane  | Coefficients |
 |--------|-------------|
@@ -73,11 +73,11 @@ Planes are normalized after extraction so signed distances are in world-space un
 
 **Bounding Sphere** — signed-distance test against all six planes. A sphere is OUTSIDE if its signed distance to any plane is less than −radius; INSIDE if all distances exceed +radius; INTERSECT otherwise.
 
-**AABB** — P-vertex / N-vertex test. For each plane, the P-vertex is the corner of the AABB most in the direction of the plane normal. If the P-vertex is outside any plane, the box is OUTSIDE. If the N-vertex is inside all planes, the box is INSIDE.
+**AABB** — P-vertex / N-vertex test. For each plane, the P vertex is the corner of the AABB most in the direction of the plane normal. If the P vertex is outside any plane, the box is OUTSIDE. If the N vertex is inside all planes, the box is INSIDE.
 
 ### Integration
 
-`CameraNode::draw()` constructs the frustum from the view-projection matrix and stores it in `SceneState`. During scene traversal:
+`CameraNode::draw()` constructs the frustum from the view projection matrix and stores it in `SceneState`. During scene traversal:
 
 - `AABBNode::draw()` — tests its bounding box; prints `"CULLED (AABB): <name>"` and skips children if outside
 - `BoundingSphereNode::draw()` — tests its bounding sphere; prints `"CULLED (Sphere): <name>"` and skips children if outside
@@ -112,15 +112,15 @@ sphere.merge_with(other)      // expand to contain both
 
 Wraps one or more child nodes behind an AABB test.
 
-- **Rasterizer:** frustum-culls via `ViewFrustum::intersect(AABB)`
+- **Rasterizer:** frustum culls via `ViewFrustum::intersect(AABB)`
 - **Ray tracer:** slab test against the bounding box; skips all children on a miss
 
 ### BoundingSphereNode
 
 Wraps children behind a bounding sphere test.
 
-- **Rasterizer:** frustum-culls via `ViewFrustum::intersect(BoundingSphere)`
-- **Ray tracer:** sphere-ray intersection test; skips all children on a miss
+- **Rasterizer:** frustum culls via `ViewFrustum::intersect(BoundingSphere)`
+- **Ray tracer:** sphere ray intersection test; skips all children on a miss
 
 ### Scene Usage
 
@@ -221,14 +221,14 @@ The patch is tessellated into a quad mesh with `n × n` quads (where n is the su
 
 #### Coordinate System Notes
 
-The two renderers use opposite up-axes, so control point layout differs:
+The two renderers use opposite up axes, so control point layout differs:
 
 | Renderer     | Up axis | u direction | v direction |
 |--------------|---------|-------------|-------------|
 | SampleProject| Z       | X           | Y           |
 | RayTracer    | Y       | Z           | X           |
 
-The ray tracer has backface culling enabled, so normals must face the camera; the control point orientation above ensures this.
+The ray tracer has backface culling enabled, so normals must face the camera, the control point orientation above ensures this.
 
 #### LOD with Bezier Patches
 
@@ -240,7 +240,7 @@ Medium detail: 15 subdivisions
 Low detail:     8 subdivisions
 ```
 
-Each level is a separate `BezierPatchSurface`; the `LODNode` selects which one to render.
+Each level is a separate `BezierPatchSurface`, the `LODNode` selects which one to render.
 
 ---
 
@@ -248,7 +248,7 @@ Each level is a separate `BezierPatchSurface`; the `LODNode` selects which one t
 
 **Files:** `scene/bezier_curve.hpp`, `scene/bezier_curve.cpp`
 
-`BezierCurve` implements cubic Bezier curve animation using forward differencing — a technique that steps along the curve in O(1) time using only additions.
+`BezierCurve` implements cubic Bezier curve animation using forward differencing, a technique that steps along the curve in O(1) time using only additions.
 
 #### Forward Differencing
 
@@ -313,13 +313,13 @@ All geometry normals must face toward the camera or the surface will be invisibl
 
 ### Coordinate System
 
-The ray tracer uses Y-up. With the camera at `(0, 0.5, -10)` looking toward `+Z` and Y-up:
+The ray tracer uses Y up. With the camera at `(0, 0.5, -10)` looking toward `+Z` and Y-up:
 
 ```
 right = view_dir × up  →  points toward −X
 ```
 
-So screen-right is in the negative-X direction.
+So screen right is in the negative-X direction.
 
 ---
 
