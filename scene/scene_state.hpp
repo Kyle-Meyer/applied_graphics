@@ -93,6 +93,9 @@ struct SceneState
     // View frustum for culling
     ViewFrustum frustum;
 
+    // When true, the current subtree is fully inside the frustum — skip BV tests
+    bool fully_inside_frustum;
+
     // Retained state to push/pop modeling matrix
     std::list<Matrix4x4> model_matrix_stack;
 

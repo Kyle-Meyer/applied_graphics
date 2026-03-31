@@ -1034,25 +1034,6 @@ void construct_scene()
     // Add coke can as children of the table transform
     add_sub_tree(table_transform, coke_texture, coke_transform, can);
 
-    // ========== Box + Cone wrapped in bounding sphere ==========
-    // Box+cone at (80, 80), z from 0 to ~22.5 -> center ~(80,80,12), radius ~20
-    auto boxcone_sphere = std::make_shared<cg::BoundingSphereNode>();
-    boxcone_sphere->set_name("Box+Cone");
-    boxcone_sphere->set_bounding_sphere(cg::BoundingSphere(cg::Point3(80.0f, 80.0f, 12.0f), 22.0f));
-    myscene->add_child(boxcone_sphere);
-
-    boxcone_sphere->add_child(box_position_transform);
-    add_sub_tree(box_position_transform, box_material, box_transform, unit_box);
-    add_sub_tree(box_position_transform, cone_material, cone_transform, cone);
-
-    // ========== Vase wrapped in AABB ==========
-    // Vase at (0, 75, 10), scaled 10x10x20 -> roughly x:[-10,10] y:[65,85] z:[0,20]
-    auto vase_aabb = std::make_shared<cg::AABBNode>();
-    vase_aabb->set_name("Vase");
-    vase_aabb->set(cg::Point3(-12.0f, 63.0f, -2.0f), cg::Point3(12.0f, 87.0f, 22.0f));
-    myscene->add_child(vase_aabb);
-    vase_aabb->add_child(vase);
-
     // ========== Globe wrapped in bounding sphere ==========
     // Globe at (80, 20, 10) scaled 10 -> radius ~10
     auto globe_sphere = std::make_shared<cg::BoundingSphereNode>();
@@ -1061,12 +1042,38 @@ void construct_scene()
     myscene->add_child(globe_sphere);
     globe_sphere->add_child(globe);
 
-    // ========== Painting wrapped in AABB ==========
-    // Painting at (50, 99, 40), scaled 30x22 -> x:[35,65] y:[98,100] z:[29,51]
+    // ========== Hierarchical BV sub-graph ==========
+    // Outer AABB encompasses box+cone, vase, and painting in the far-Y half of the room.
+    // When this outer volume is OUTSIDE the frustum all three inner BVs are culled at once.
+    // When it is INSIDE, the fully_inside_frustum flag lets children skip their own tests.
+    auto far_group_aabb = std::make_shared<cg::AABBNode>();
+    far_group_aabb->set_name("Far Group");
+    // Covers vase x:[-12,12] y:[63,87], painting x:[33,101] y:[97,101], box+cone x:[58,102] y:[58,102]
+    far_group_aabb->set(cg::Point3(-15.0f, 58.0f, -5.0f), cg::Point3(105.0f, 105.0f, 55.0f));
+    myscene->add_child(far_group_aabb);
+
+    // Child BV: Box + Cone
+    auto boxcone_sphere = std::make_shared<cg::BoundingSphereNode>();
+    boxcone_sphere->set_name("Box+Cone");
+    boxcone_sphere->set_bounding_sphere(cg::BoundingSphere(cg::Point3(80.0f, 80.0f, 12.0f), 22.0f));
+    far_group_aabb->add_child(boxcone_sphere);
+
+    boxcone_sphere->add_child(box_position_transform);
+    add_sub_tree(box_position_transform, box_material, box_transform, unit_box);
+    add_sub_tree(box_position_transform, cone_material, cone_transform, cone);
+
+    // Child BV: Vase
+    auto vase_aabb = std::make_shared<cg::AABBNode>();
+    vase_aabb->set_name("Vase");
+    vase_aabb->set(cg::Point3(-12.0f, 63.0f, -2.0f), cg::Point3(12.0f, 87.0f, 22.0f));
+    far_group_aabb->add_child(vase_aabb);
+    vase_aabb->add_child(vase);
+
+    // Child BV: Painting
     auto painting_aabb = std::make_shared<cg::AABBNode>();
     painting_aabb->set_name("Painting");
     painting_aabb->set(cg::Point3(33.0f, 97.0f, 27.0f), cg::Point3(67.0f, 101.0f, 53.0f));
-    myscene->add_child(painting_aabb);
+    far_group_aabb->add_child(painting_aabb);
     painting_aabb->add_child(painting);
 
     // ========== Bezier patch (parametric surface, LOD) ==========

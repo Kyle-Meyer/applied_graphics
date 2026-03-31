@@ -21,14 +21,25 @@ void BoundingSphereNode::merge_bounding_sphere(const BoundingSphere &sphere)
 
 void BoundingSphereNode::draw(SceneState &scene_state)
 {
-    FrustumIntersectType result = scene_state.frustum.intersect(bounding_sphere_);
-    if (result == FrustumIntersectType::OUTSIDE)
+    if (!scene_state.fully_inside_frustum)
     {
-        std::cout << "CULLED (Sphere): " << name_ << std::endl;
-        return;
+        FrustumIntersectType result = scene_state.frustum.intersect(bounding_sphere_);
+        if (result == FrustumIntersectType::OUTSIDE)
+        {
+            std::cout << "CULLED (Sphere): " << name_ << std::endl;
+            return;
+        }
+        if (result == FrustumIntersectType::INSIDE)
+        {
+            // Entire subtree is inside — descendants can skip frustum tests
+            scene_state.fully_inside_frustum = true;
+            SceneNode::draw(scene_state);
+            scene_state.fully_inside_frustum = false;
+            return;
+        }
     }
 
-    // Draw children of this node
+    // INTERSECT (or already fully inside): draw children, which will test their own BVs
     SceneNode::draw(scene_state);
 }
 

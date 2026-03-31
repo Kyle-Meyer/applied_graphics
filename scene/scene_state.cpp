@@ -8,6 +8,7 @@ void SceneState::init()
     max_enabled_light = 0;
     model_matrix.set_identity();
     model_matrix_stack.clear();
+    fully_inside_frustum = false;
 }
 
 void SceneState::push_transforms() { model_matrix_stack.push_back(model_matrix); }
