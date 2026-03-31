@@ -44,7 +44,7 @@ Color3 RayTracer::trace_ray(Ray &ray)
     scene_root_->find_closest_intersect(ray, current_state, closest);
 
     // If no object hit, return background value
-    if(!closest.geometry_node) { return Color3(0.0f, 0.0f, 0.0f); }
+    if(!closest.geometry_node) { return Color3(0.02f, 0.04f, 0.08f); }
 
     // Get the nearest object and state
     MaterialNode *material = (MaterialNode *)closest.material_node;

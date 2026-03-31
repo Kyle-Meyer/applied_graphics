@@ -273,7 +273,13 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     auto obelisk_xform = std::make_shared<cg::RTTransformNode>();
     obelisk_xform->translate(0.0f, -1.0f, 2.0f); // base on sand, slightly in front
     obelisk_xform->add_child(make_obelisk());
-    obelisk_mat->add_child(obelisk_xform);
+
+    // BV: world-space AABB covering obelisk base (-0.6,-1,1.6) to apex (0.6,7.5,2.4)
+    auto obelisk_bv = std::make_shared<cg::AABBNode>();
+    obelisk_bv->set_name("Obelisk");
+    obelisk_bv->set(cg::Point3(-0.65f, -1.1f, 1.55f), cg::Point3(0.65f, 7.6f, 2.45f));
+    obelisk_bv->add_child(obelisk_xform);
+    obelisk_mat->add_child(obelisk_bv);
     scene_node->add_child(obelisk_mat);
 
     // ---------- ROCK MATERIAL (shared by all rock LOD levels) ----------
@@ -290,7 +296,9 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
         auto lod = std::make_shared<cg::LODNode>(obj);
         lod->set_position(cg::Point3(tx, -1.0f - burial, tz));
 
-        // HIGH level: OBJ mesh
+        const float cy = -1.0f - burial + sphere_radius * 0.5f;
+
+        // HIGH level (dist < 15): detailed OBJ mesh
         auto mesh = load_obj_mesh(obj);
         if (mesh)
         {
@@ -298,12 +306,17 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
             xform->translate(tx, -1.0f - burial, tz);
             xform->scale(scale, scale, scale);
             xform->add_child(mesh);
-            lod->add_level(lod_threshold, xform);
+            lod->add_level(15.0f, xform);
         }
 
-        // LOW level: sphere approximation
+        // MED level (dist < lod_threshold): sphere stand-in
+        auto med_sphere = std::make_shared<cg::RTSphereNode>(
+            cg::Point3(tx, cy, tz), sphere_radius);
+        lod->add_level(lod_threshold, med_sphere);
+
+        // LOW level (dist >= lod_threshold): same sphere, indistinguishable at distance
         auto low_sphere = std::make_shared<cg::RTSphereNode>(
-            cg::Point3(tx, -1.0f - burial + sphere_radius * 0.5f, tz), sphere_radius);
+            cg::Point3(tx, cy, tz), sphere_radius);
         lod->add_level(1e30f, low_sphere);
 
         return lod;
