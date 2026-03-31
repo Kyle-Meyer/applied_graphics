@@ -26,8 +26,11 @@
 #include "RayTracer/rt_transform_node.hpp"
 #include "scene/bounding_aabb_node.hpp"
 #include "scene/bezier_patch.hpp"
-#include "scene/bezier_curve.hpp"
 #include "scene/lod_node.hpp"
+
+#include "assimp/Importer.hpp"
+#include "assimp/scene.h"
+#include "assimp/postprocess.h"
 
 #include <chrono>
 #include <iostream>
@@ -74,19 +77,105 @@ std::vector<cg::LightNode *> g_lights;
 // Scene construction
 std::shared_ptr<cg::SceneNode> g_scene_root;
 
-// ---------- Bezier curve animation state ----------
-// Control points for a cubic Bezier arc through the scene (Y-up, camera looks toward +Z)
-static const cg::Point3 CURVE_P0(-1.5f,  0.5f,  0.0f);
-static const cg::Point3 CURVE_P1(-0.5f,  2.0f,  3.0f);
-static const cg::Point3 CURVE_P2( 0.5f,  2.0f,  6.0f);
-static const cg::Point3 CURVE_P3( 1.5f,  0.5f,  9.0f);
-constexpr int CURVE_STEPS = 60;
+// ---------- Desert scene camera presets ----------
+struct CameraPreset { cg::Point3 pos; cg::Point3 target; };
+static const CameraPreset PRESETS[] = {
+    { cg::Point3(0.0f,  3.0f, -15.0f), cg::Point3(0.0f, 1.5f,  5.0f) }, // 1: wide — obelisk + shadow sweep
+    { cg::Point3(3.0f,  0.2f,  -8.0f), cg::Point3(0.0f, 0.0f,  5.0f) }, // 2: ground level — sparkle + shadow drama
+    { cg::Point3(-5.0f, 1.5f,  -5.0f), cg::Point3(-3.5f,-1.0f,-3.0f) }, // 3: close rock — foreground detail
+};
 
-// BezierCurve drives the animated sphere via forward differencing
-std::unique_ptr<cg::BezierCurve> g_bezier_curve;
+/**
+ * Load an OBJ file via Assimp and return it as an RTMeshNode.
+ * Returns nullptr and prints an error if the file is not found or fails to load.
+ */
+static std::shared_ptr<cg::RTMeshNode> load_obj_mesh(const std::string &filename)
+{
+    cg::FileInfo info = cg::locate_path_for_filename(filename);
+    if (!info.found)
+    {
+        std::cerr << "load_obj_mesh: could not find '" << filename << "'\n";
+        return nullptr;
+    }
 
-// Pointer to the animated sphere so we can move it with set_center() each step
-cg::RTSphereNode *g_anim_sphere = nullptr;
+    Assimp::Importer importer;
+    const aiScene *ai = importer.ReadFile(
+        info.file_path,
+        aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices);
+
+    if (!ai || !ai->mNumMeshes)
+    {
+        std::cerr << "load_obj_mesh: failed to load '" << info.file_path << "': "
+                  << importer.GetErrorString() << "\n";
+        return nullptr;
+    }
+
+    const aiMesh *mesh = ai->mMeshes[0];
+
+    std::vector<cg::VertexAndNormal> vertices;
+    vertices.reserve(mesh->mNumVertices);
+    for (uint32_t i = 0; i < mesh->mNumVertices; ++i)
+    {
+        cg::VertexAndNormal v;
+        v.vertex = cg::Point3(mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z);
+        if (mesh->HasNormals())
+            v.normal = cg::Vector3(mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z);
+        vertices.push_back(v);
+    }
+
+    std::vector<uint16_t> faces;
+    faces.reserve(mesh->mNumFaces * 3);
+    for (uint32_t i = 0; i < mesh->mNumFaces; ++i)
+    {
+        const aiFace &f = mesh->mFaces[i];
+        if (f.mNumIndices == 3)
+        {
+            faces.push_back(static_cast<uint16_t>(f.mIndices[0]));
+            faces.push_back(static_cast<uint16_t>(f.mIndices[1]));
+            faces.push_back(static_cast<uint16_t>(f.mIndices[2]));
+        }
+    }
+
+    return std::make_shared<cg::RTMeshNode>(vertices, faces);
+}
+
+/**
+ * Build an obelisk mesh — tapered rectangular shaft with a pyramidion cap.
+ * Base centre at y=0; shaft tapers from bw×bd at base to tw×td at y=h;
+ * pyramidion apex at y=ph. All faces wound CCW for outward normals.
+ */
+static std::shared_ptr<cg::RTMeshNode> make_obelisk()
+{
+    const float bw = 0.6f,  bd = 0.4f;  // base half-extents x, z
+    const float tw = 0.18f, td = 0.12f; // shaft-top half-extents
+    const float h  = 7.0f;              // shaft height
+    const float ph = 8.5f;              // pyramidion apex height
+
+    // Vertex layout
+    // Base ring (y=0):   0=front-left  1=front-right  2=back-right  3=back-left
+    // Top ring  (y=h):   4=front-left  5=front-right  6=back-right  7=back-left
+    // Apex      (y=ph):  8
+    std::vector<cg::Point3> verts = {
+        {-bw, 0.0f, -bd}, { bw, 0.0f, -bd}, { bw, 0.0f,  bd}, {-bw, 0.0f,  bd},
+        {-tw,    h, -td}, { tw,    h, -td}, { tw,    h,  td}, {-tw,    h,  td},
+        { 0.0f, ph, 0.0f}
+    };
+
+    std::vector<uint16_t> faces = {
+        // Shaft — each face: (BR, BL, TL), (BR, TL, TR) CCW from outside
+        1, 0, 4,   1, 4, 5,  // front  (normal -Z)
+        1, 5, 6,   1, 6, 2,  // right  (normal +X)
+        2, 6, 7,   2, 7, 3,  // back   (normal +Z)
+        3, 7, 4,   3, 4, 0,  // left   (normal -X)
+        // Pyramidion — (right-base, left-base, apex) CCW from outside
+        5, 4, 8,  // front
+        6, 5, 8,  // right
+        7, 6, 8,  // back
+        4, 7, 8,  // left
+    };
+
+    return std::make_shared<cg::RTMeshNode>(verts, faces);
+}
 
 // Helper: build a unit pyramid mesh (4 triangular sides + base)
 // Base at y=0, apex at y=1, footprint -0.5..0.5 in x/z
@@ -150,258 +239,120 @@ make_bezier_patch_mesh(const std::array<cg::Point3, 16> &cp, uint32_t subdivisio
 std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> camera)
 {
     // ==========================================================
-    // Scene designed to demonstrate VIEW FRUSTUM CULLING and LOD
-    // Camera: (0, 0.5, -10), looking toward +Z
+    // Moonlit Desert Ruins
+    // Camera: (0, 3, -15), looking toward (0, 1.5, 5)  [Y-up]
     //
-    // LOD demo:
-    //   NearLOD at (0, 0, -2): dist ~8  -> HIGH detail (mesh pyramid, level 0)
-    //   FarLOD  at (0, 0, 10): dist ~20 -> LOW detail  (sphere,      level 1)
-    //
-    // AABB culling demo:
-    //   "VisibleGroup" (x=-3..3, y=-2..2, z=-4..12) - in camera view, rays HIT
-    //   "OffscreenGroup" (x=9..13, y=-2..2, z=-4..5) - far right, rays MISS -> prints RT CULLED
+    // Hierarchy:
+    //   Sand floor (large sphere trick)
+    //   Obelisk (Bezier patch mesh, BoundingSphere BV)
+    //   AABBNode "NearRocks"  — rocks 1-3, z:-5..4,  LOD dist<30
+    //   AABBNode "MidRocks"   — rocks 4-6, z: 5..14, LOD dist<32
+    //   AABBNode "FarRocks"   — rocks 7-9, z:20..33, spheres only (always LOW)
     // ==========================================================
     auto scene_node = std::make_shared<cg::SceneNode>();
 
-    // ---------- FLOOR (large sphere trick, checkerboard) ----------
+    // ---------- SAND FLOOR (large sphere trick) ----------
+    // Warm sandy colour with low-medium specular — will receive normal map in Week 4
     auto floor_mat = std::make_shared<cg::MaterialNode>();
-    floor_mat->set_ambient_and_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
-    floor_mat->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
-    floor_mat->set_shininess(16.0f);
-    auto floor_tex = cg::FunctionalTexture::checkerboard(
-        cg::Color3(0.85f, 0.85f, 0.85f), cg::Color3(0.2f, 0.2f, 0.2f), 1.0f);
-    // Radius 1000, center at y=-1001: surface at y=-1
+    floor_mat->set_ambient_and_diffuse(cg::Color4(0.76f, 0.65f, 0.42f, 1.0f)); // sand
+    floor_mat->set_specular(cg::Color4(0.25f, 0.22f, 0.15f, 1.0f));
+    floor_mat->set_shininess(12.0f);
     auto floor_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(0.0f, -1001.0f, 0.0f), 1000.0f);
-    floor_tex->add_child(floor_sphere);
-    floor_mat->add_child(floor_tex);
+        cg::Point3(0.0f, -1001.0f, 0.0f), 1000.0f);  // surface at y=-1
+    floor_mat->add_child(floor_sphere);
     scene_node->add_child(floor_mat);
 
-    // ---------- VISIBLE GROUP AABB (center of scene) ----------
-    // Wraps the LOD objects + a marble sphere.
-    // Rays from the camera pointing into the scene will HIT this AABB.
-    auto visible_aabb = std::make_shared<cg::AABBNode>();
-    visible_aabb->set_name("VisibleGroup");
-    visible_aabb->set(
-        cg::Point3(-3.0f, -1.5f, -4.0f),
-        cg::Point3( 3.0f,  2.0f, 12.0f));
+    // ---------- OBELISK ----------
+    // Dark polished granite — high specular for "glistening" under moonlight.
+    // Shaft base at y=-1 (sand surface), apex at y=7.5.
+    auto obelisk_mat = std::make_shared<cg::MaterialNode>();
+    obelisk_mat->set_ambient_and_diffuse(cg::Color4(0.18f, 0.16f, 0.15f, 1.0f)); // dark grey granite
+    obelisk_mat->set_specular(cg::Color4(0.8f, 0.85f, 0.9f, 1.0f));              // blue-tinted sheen
+    obelisk_mat->set_shininess(180.0f);
 
-    // --- LOD Node 1: NEAR object (dist ~8 from camera -> HIGH detail) ---
-    // High detail: gold pyramid mesh | Low detail: orange sphere
-    // LOD threshold = 11 units: dist 8 uses level 0 (HIGH)
-    auto near_lod = std::make_shared<cg::LODNode>("NearLOD");
-    near_lod->set_position(cg::Point3(0.0f, 0.0f, -2.0f));  // world position for RT distance
+    auto obelisk_xform = std::make_shared<cg::RTTransformNode>();
+    obelisk_xform->translate(0.0f, -1.0f, 2.0f); // base on sand, slightly in front
+    obelisk_xform->add_child(make_obelisk());
+    obelisk_mat->add_child(obelisk_xform);
+    scene_node->add_child(obelisk_mat);
 
-    // Level 0 (HIGH): scaled & colored pyramid mesh
-    auto near_high_mat = std::make_shared<cg::MaterialNode>();
-    near_high_mat->set_ambient_and_diffuse(cg::Color4(0.9f, 0.7f, 0.1f, 1.0f));  // gold
-    near_high_mat->set_specular(cg::Color4(1.0f, 0.9f, 0.4f, 1.0f));
-    near_high_mat->set_shininess(32.0f);
-    auto near_high_xform = std::make_shared<cg::RTTransformNode>();
-    near_high_xform->translate(0.0f, -1.0f, -2.0f);
-    near_high_xform->rotate_y(20.0f);
-    near_high_xform->scale(1.2f, 1.8f, 1.2f);
-    near_high_xform->add_child(make_pyramid());
-    near_high_mat->add_child(near_high_xform);
+    // ---------- ROCK MATERIAL (shared by all rock LOD levels) ----------
+    auto rock_mat = std::make_shared<cg::MaterialNode>();
+    rock_mat->set_ambient_and_diffuse(cg::Color4(0.45f, 0.40f, 0.35f, 1.0f)); // warm grey sandstone
+    rock_mat->set_specular(cg::Color4(0.20f, 0.20f, 0.18f, 1.0f));
+    rock_mat->set_shininess(24.0f);
 
-    // Level 1 (LOW): simple sphere (same position, radius 0.7)
-    auto near_low_mat = std::make_shared<cg::MaterialNode>();
-    near_low_mat->set_ambient_and_diffuse(cg::Color4(0.9f, 0.5f, 0.1f, 1.0f));  // orange
-    near_low_mat->set_specular(cg::Color4(0.6f, 0.6f, 0.6f, 1.0f));
-    near_low_mat->set_shininess(16.0f);
-    auto near_low_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(0.0f, 0.0f, -2.0f), 0.7f);
-    near_low_mat->add_child(near_low_sphere);
+    // Helper lambda: wrap a rock mesh in a transform (scale + translate) under rock_mat
+    // burial > 0 sinks the rock below the sand surface for a "partially buried" look
+    auto make_rock_lod = [&](const std::string &obj, float scale,
+                              float tx, float tz, float burial,
+                              float lod_threshold, float sphere_radius) {
+        auto lod = std::make_shared<cg::LODNode>(obj);
+        lod->set_position(cg::Point3(tx, -1.0f - burial, tz));
 
-    near_lod->add_level(11.0f, near_high_mat);   // dist <= 11 -> pyramid (HIGH)
-    near_lod->add_level(1e30f, near_low_mat);    // dist >  11 -> sphere  (LOW)
-    visible_aabb->add_child(near_lod);
-
-    // --- LOD Node 2: FAR object (dist ~20 from camera -> LOW detail) ---
-    // High detail: cyan cube mesh | Low detail: blue sphere
-    // LOD threshold = 11: dist 20 uses level 1 (LOW)
-    auto far_lod = std::make_shared<cg::LODNode>("FarLOD");
-    far_lod->set_position(cg::Point3(0.0f, 0.0f, 10.0f));  // world position for RT distance
-
-    // Level 0 (HIGH): reflective cyan cube mesh
-    auto far_high_mat = std::make_shared<cg::MaterialNode>();
-    far_high_mat->set_ambient_and_diffuse(cg::Color4(0.1f, 0.6f, 0.7f, 1.0f));  // cyan
-    far_high_mat->set_specular(cg::Color4(0.8f, 0.8f, 0.8f, 1.0f));
-    far_high_mat->set_shininess(64.0f);
-    far_high_mat->set_global_reflectivity(0.25f, 0.25f, 0.25f);
-    auto far_high_xform = std::make_shared<cg::RTTransformNode>();
-    far_high_xform->translate(0.0f, -0.5f, 10.0f);
-    far_high_xform->rotate_y(35.0f);
-    far_high_xform->scale(1.0f, 1.0f, 1.0f);
-    far_high_xform->add_child(make_cube());
-    far_high_mat->add_child(far_high_xform);
-
-    // Level 1 (LOW): simple sphere
-    auto far_low_mat = std::make_shared<cg::MaterialNode>();
-    far_low_mat->set_ambient_and_diffuse(cg::Color4(0.2f, 0.3f, 0.9f, 1.0f));  // blue
-    far_low_mat->set_specular(cg::Color4(0.5f, 0.5f, 0.5f, 1.0f));
-    far_low_mat->set_shininess(16.0f);
-    auto far_low_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(0.0f, 0.0f, 10.0f), 0.7f);
-    far_low_mat->add_child(far_low_sphere);
-
-    far_lod->add_level(11.0f, far_high_mat);   // dist <= 11 -> cube   (HIGH)
-    far_lod->add_level(1e30f, far_low_mat);    // dist >  11 -> sphere (LOW)
-    visible_aabb->add_child(far_lod);
-
-    // --- Mirror sphere in the visible group (bonus reflective object) ---
-    auto mirror_mat = std::make_shared<cg::MaterialNode>();
-    mirror_mat->set_ambient_and_diffuse(cg::Color4(0.05f, 0.05f, 0.05f, 1.0f));
-    mirror_mat->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
-    mirror_mat->set_shininess(128.0f);
-    mirror_mat->set_global_reflectivity(0.9f, 0.9f, 0.9f);
-    auto mirror_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(-1.8f, 0.0f, 3.0f), 0.6f);
-    mirror_mat->add_child(mirror_sphere);
-    visible_aabb->add_child(mirror_mat);
-
-    scene_node->add_child(visible_aabb);
-
-    // ---------- TEST CUBE (winding verification) ----------
-    // Plain green cube placed at (2, -0.5, 2), clearly in view from camera (0, 0.5, -10).
-    // Remove once winding is confirmed correct.
-    auto test_cube_mat = std::make_shared<cg::MaterialNode>();
-    test_cube_mat->set_ambient_and_diffuse(cg::Color4(0.1f, 0.8f, 0.2f, 1.0f));  // green
-    test_cube_mat->set_specular(cg::Color4(0.6f, 0.6f, 0.6f, 1.0f));
-    test_cube_mat->set_shininess(32.0f);
-    auto test_cube_xform = std::make_shared<cg::RTTransformNode>();
-    test_cube_xform->translate(2.0f, -0.5f, 2.0f);
-    test_cube_xform->rotate_y(25.0f);
-    test_cube_xform->scale(0.8f, 0.8f, 0.8f);
-    test_cube_xform->add_child(make_cube());
-    test_cube_mat->add_child(test_cube_xform);
-    scene_node->add_child(test_cube_mat);
-
-    // ---------- OFF-SCREEN GROUP AABB (far right, culling demo) ----------
-    // This group sits well outside the camera's main view.
-    // Most rays will miss its AABB -> "RT CULLED (AABB): OffscreenGroup" printed.
-    auto offscreen_aabb = std::make_shared<cg::AABBNode>();
-    offscreen_aabb->set_name("OffscreenGroup");
-    offscreen_aabb->set(
-        cg::Point3(9.0f, -1.5f, -4.0f),
-        cg::Point3(13.0f, 2.0f,  5.0f));
-
-    // Red sphere - rarely visible but inside the AABB
-    auto red_mat = std::make_shared<cg::MaterialNode>();
-    red_mat->set_ambient_and_diffuse(cg::Color4(0.8f, 0.15f, 0.15f, 1.0f));
-    red_mat->set_specular(cg::Color4(0.6f, 0.6f, 0.6f, 1.0f));
-    red_mat->set_shininess(32.0f);
-    auto red_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(11.0f, 0.0f, 0.0f), 0.8f);
-    red_mat->add_child(red_sphere);
-    offscreen_aabb->add_child(red_mat);
-
-    // Purple sphere beside the red one
-    auto purple_mat = std::make_shared<cg::MaterialNode>();
-    purple_mat->set_ambient_and_diffuse(cg::Color4(0.5f, 0.1f, 0.7f, 1.0f));
-    purple_mat->set_specular(cg::Color4(0.4f, 0.4f, 0.4f, 1.0f));
-    purple_mat->set_shininess(16.0f);
-    auto purple_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(11.0f, 0.0f, 3.0f), 0.8f);
-    purple_mat->add_child(purple_sphere);
-    offscreen_aabb->add_child(purple_mat);
-
-    scene_node->add_child(offscreen_aabb);
-
-    // ---------- BEZIER PATCH (parametric surface with LOD) ----------
-    // Control points orient the dome in +Y (upward) to match the scene's Y-up
-    // convention.  u varies in Z, v varies in X, height is Y.
-    // With this layout dS/du x dS/dv points in +Y so normals face the camera.
-    //
-    // LOD levels (distance from camera ~8.5 to world-centre (0, 0, 4)):
-    //   HIGH (16 subdivs) – distance <= 11
-    //   LOW  ( 4 subdivs) – distance >  11
-    const std::array<cg::Point3, 16> patch_cp = {{
-        // i=0 (u=0): z=-1.5
-        {-1.5f, 0.0f, -1.5f}, {-0.5f, 0.0f, -1.5f}, { 0.5f, 0.0f, -1.5f}, { 1.5f, 0.0f, -1.5f},
-        // i=1 (u=1/3): z=-0.5
-        {-1.5f, 0.5f, -0.5f}, {-0.5f, 2.0f, -0.5f}, { 0.5f, 2.0f, -0.5f}, { 1.5f, 0.5f, -0.5f},
-        // i=2 (u=2/3): z=+0.5
-        {-1.5f, 0.5f,  0.5f}, {-0.5f, 2.0f,  0.5f}, { 0.5f, 2.0f,  0.5f}, { 1.5f, 0.5f,  0.5f},
-        // i=3 (u=1): z=+1.5
-        {-1.5f, 0.0f,  1.5f}, {-0.5f, 0.0f,  1.5f}, { 0.5f, 0.0f,  1.5f}, { 1.5f, 0.0f,  1.5f},
-    }};
-
-    // Teal material for the patch
-    auto patch_mat = std::make_shared<cg::MaterialNode>();
-    patch_mat->set_ambient_and_diffuse(cg::Color4(0.1f, 0.6f, 0.6f, 1.0f));
-    patch_mat->set_specular(cg::Color4(0.7f, 0.9f, 0.9f, 1.0f));
-    patch_mat->set_shininess(48.0f);
-
-    // Place the patch to the right of the yellow pyramid (pyramid is at (0,-1,-2)).
-    // Scale 0.7 keeps it a similar size to the pyramid.
-    auto patch_xform_high = std::make_shared<cg::RTTransformNode>();
-    patch_xform_high->translate(2.5f, -1.0f, -2.0f);
-    patch_xform_high->scale(0.7f, 0.7f, 0.7f);
-    patch_xform_high->add_child(make_bezier_patch_mesh(patch_cp, 16));
-
-    auto patch_xform_low = std::make_shared<cg::RTTransformNode>();
-    patch_xform_low->translate(2.5f, -1.0f, -2.0f);
-    patch_xform_low->scale(0.7f, 0.7f, 0.7f);
-    patch_xform_low->add_child(make_bezier_patch_mesh(patch_cp, 4));
-
-    // Camera (0, 0.5, -10) to (2.5, -1, -2) ≈ 8.5 → HIGH detail
-    auto patch_lod = std::make_shared<cg::LODNode>("BezierPatch");
-    patch_lod->set_position(cg::Point3(2.5f, -1.0f, -2.0f));
-    patch_lod->add_level(11.0f, patch_xform_high);   // HIGH when close
-    patch_lod->add_level(1e30f, patch_xform_low);    // LOW  when far
-
-    patch_mat->add_child(patch_lod);
-    scene_node->add_child(patch_mat);
-
-    // ---------- BEZIER CURVE ANIMATION (parametric curve, forward differencing) ----------
-    // Small grey marker spheres at evenly-spaced t values visualise the path.
-    // One bright orange sphere sits at the current curve position (advanced with 'N').
-    //
-    // The curve sweeps from close-right to far-left in world space:
-    //   P0 (-1.5, 0.5, 0.0) → P1 (-0.5, 2.0, 3.0) → P2 (0.5, 2.0, 6.0) → P3 (1.5, 0.5, 9.0)
-    // (screen-right = -X, so P0 appears on screen-right and P3 on screen-left)
-    {
-        // --- Marker spheres (7 samples: t = 0, 1/6 ... 1) ---
-        auto marker_mat = std::make_shared<cg::MaterialNode>();
-        marker_mat->set_ambient_and_diffuse(cg::Color4(0.6f, 0.7f, 0.8f, 1.0f));
-        marker_mat->set_specular(cg::Color4(0.3f, 0.3f, 0.3f, 1.0f));
-        marker_mat->set_shininess(8.0f);
-
-        constexpr int MARKERS = 7;
-        for(int i = 0; i < MARKERS; ++i)
+        // HIGH level: OBJ mesh
+        auto mesh = load_obj_mesh(obj);
+        if (mesh)
         {
-            float      t   = static_cast<float>(i) / static_cast<float>(MARKERS - 1);
-            cg::Point3 pos = cg::BezierCurve::evaluate(t, CURVE_P0, CURVE_P1, CURVE_P2, CURVE_P3);
-            marker_mat->add_child(
-                std::make_shared<cg::RTSphereNode>(pos, 0.06f));
+            auto xform = std::make_shared<cg::RTTransformNode>();
+            xform->translate(tx, -1.0f - burial, tz);
+            xform->scale(scale, scale, scale);
+            xform->add_child(mesh);
+            lod->add_level(lod_threshold, xform);
         }
-        scene_node->add_child(marker_mat);
 
-        // --- Animated sphere (starts at P0, moved with 'N') ---
-        // RTSphereNode stores world-space coordinates directly — no transform wrapper needed.
-        auto anim_mat = std::make_shared<cg::MaterialNode>();
-        anim_mat->set_ambient_and_diffuse(cg::Color4(0.9f, 0.5f, 0.05f, 1.0f)); // orange
-        anim_mat->set_specular(cg::Color4(1.0f, 0.8f, 0.4f, 1.0f));
-        anim_mat->set_shininess(48.0f);
+        // LOW level: sphere approximation
+        auto low_sphere = std::make_shared<cg::RTSphereNode>(
+            cg::Point3(tx, -1.0f - burial + sphere_radius * 0.5f, tz), sphere_radius);
+        lod->add_level(1e30f, low_sphere);
 
-        cg::Point3 init_pos = g_bezier_curve->current_point();
-        auto anim_sphere = std::make_shared<cg::RTSphereNode>(init_pos, 0.18f);
-        anim_mat->add_child(anim_sphere);
-        scene_node->add_child(anim_mat);
+        return lod;
+    };
 
-        // Expose sphere so handle_key_event can call set_center() each step
-        g_anim_sphere = anim_sphere.get();
-    }
+    // ---------- NEAR ROCKS (AABBNode: rocks 1-3, z:-5..4) ----------
+    auto near_rocks = std::make_shared<cg::AABBNode>();
+    near_rocks->set_name("NearRocks");
+    near_rocks->set(cg::Point3(-9.0f, -2.0f, -6.0f), cg::Point3(7.0f, 2.0f, 5.0f));
+    rock_mat->add_child(near_rocks);
 
-    // ---------- LIGHT ----------
-    auto light = std::make_shared<cg::LightNode>(0);
-    light->set_position(cg::HPoint3(3.0f, 8.0f, -4.0f, 1.0f));   // high, slightly in front
-    light->set_diffuse(cg::Color4(1.2f, 1.2f, 1.1f, 1.0f));
-    light->set_specular(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
-    light->enable();
-    scene_node->add_child(light);
-    g_lights.push_back(light.get());
+    near_rocks->add_child(make_rock_lod("rock1.obj", 4.0f, -3.5f, -3.0f, 0.4f, 30.0f, 0.9f));
+    near_rocks->add_child(make_rock_lod("rock2.obj", 3.0f,  4.5f, -1.0f, 0.2f, 30.0f, 0.7f));
+    near_rocks->add_child(make_rock_lod("rock3.obj", 2.5f, -6.0f,  2.5f, 0.1f, 30.0f, 0.6f));
+
+    // ---------- MID ROCKS (AABBNode: rocks 4-6, z:5..14) ----------
+    auto mid_rocks = std::make_shared<cg::AABBNode>();
+    mid_rocks->set_name("MidRocks");
+    mid_rocks->set(cg::Point3(-7.0f, -2.0f, 4.0f), cg::Point3(9.0f, 2.0f, 15.0f));
+    rock_mat->add_child(mid_rocks);
+
+    mid_rocks->add_child(make_rock_lod("rock4.obj", 3.5f,  5.5f,  7.0f, 0.3f, 32.0f, 0.8f));
+    mid_rocks->add_child(make_rock_lod("rock5.obj", 2.8f, -3.5f, 10.0f, 0.2f, 32.0f, 0.65f));
+    mid_rocks->add_child(make_rock_lod("rock6.obj", 4.0f,  2.0f, 13.0f, 0.4f, 32.0f, 0.95f));
+
+    // ---------- FAR ROCKS (AABBNode: rocks 7-9, z:20..33 — spheres only) ----------
+    // Always low detail; demonstrates AABB culling at large angles without LOD overhead
+    auto far_rocks = std::make_shared<cg::AABBNode>();
+    far_rocks->set_name("FarRocks");
+    far_rocks->set(cg::Point3(-10.0f, -2.0f, 19.0f), cg::Point3(8.0f, 2.0f, 34.0f));
+    rock_mat->add_child(far_rocks);
+
+    far_rocks->add_child(std::make_shared<cg::RTSphereNode>(cg::Point3(-7.0f, -0.8f, 22.0f), 1.2f));
+    far_rocks->add_child(std::make_shared<cg::RTSphereNode>(cg::Point3( 4.5f, -0.9f, 27.0f), 0.9f));
+    far_rocks->add_child(std::make_shared<cg::RTSphereNode>(cg::Point3(-1.5f, -1.0f, 32.0f), 1.5f));
+
+    scene_node->add_child(rock_mat);
+
+    // ---------- MOON LIGHT ----------
+    // Low-angle directional light from the upper-left — maximises shadow length.
+    // Blue-white colour evokes cool moonlight. w=0 makes it directional.
+    auto moon = std::make_shared<cg::LightNode>(0);
+    moon->set_position(cg::HPoint3(-8.0f, 12.0f, -6.0f, 0.0f)); // directional
+    moon->set_diffuse(cg::Color4(0.70f, 0.85f, 1.0f, 1.0f));    // pale blue-white
+    moon->set_specular(cg::Color4(0.80f, 0.90f, 1.0f, 1.0f));
+    moon->set_ambient(cg::Color4(0.02f, 0.04f, 0.12f, 1.0f));   // faint night-sky fill
+    moon->enable();
+    scene_node->add_child(moon);
+    g_lights.push_back(moon.get());
 
     return scene_node;
 }
@@ -604,21 +555,18 @@ cg::EventType handle_key_event(const SDL_Event &event)
             result = cg::EventType::REDRAW;
             break;
 
-        // Advance Bezier curve one step (forward differencing) and re-render
-        case SDLK_N:
-            if(g_bezier_curve && g_anim_sphere)
-            {
-                g_bezier_curve->step();
-                if(g_bezier_curve->is_done()) g_bezier_curve->reset();
-
-                cg::Point3 pos = g_bezier_curve->current_point();
-                g_anim_sphere->set_center(pos);
-
-                std::cout << "Bezier step " << g_bezier_curve->total_steps()
-                          << "  pos = (" << pos.x << ", " << pos.y << ", " << pos.z << ")\n";
-                result = cg::EventType::REDRAW;
-            }
+        // Camera presets: 1=wide, 2=ground level, 3=close rock
+        case SDLK_1: case SDLK_2: case SDLK_3:
+        {
+            int idx = (event.key.key - SDLK_1);
+            const CameraPreset &p = PRESETS[idx];
+            g_camera->set_position_and_look_at_pt(p.pos, p.target);
+            g_camera->set_view_up(cg::Vector3(0.0f, 1.0f, 0.0f));
+            g_ray_tracer->set_view_position(p.pos);
+            std::cout << "Camera preset " << idx + 1 << "\n";
+            result = cg::EventType::REDRAW;
             break;
+        }
 
         default: break;
     }
@@ -667,12 +615,14 @@ int main(int argc, char **argv)
     cg::init_logging("RayTracer.log");
 
     // Print options
-    std::cout << "Transforms:" << std::endl;
-    std::cout << "r,R - Change camera roll\n";
-    std::cout << "p,P - Change camera pitch\n";
-    std::cout << "h,H - Change camera heading\n";
+    std::cout << "Moonlit Desert Ruins — Ray Tracer\n";
+    std::cout << "r,R - Roll camera\n";
+    std::cout << "p,P - Pitch camera\n";
+    std::cout << "h,H - Heading camera\n";
     std::cout << "a   - Toggle anti-aliasing\n";
-    std::cout << "n   - Advance Bezier curve one step (forward differencing)\n";
+    std::cout << "1   - Wide shot (obelisk + shadow sweep)\n";
+    std::cout << "2   - Ground level (sand sparkle + shadow drama)\n";
+    std::cout << "3   - Close rock (foreground detail)\n";
 
     // Initialize SDL
     if(!SDL_Init(SDL_INIT_VIDEO))
@@ -727,19 +677,12 @@ int main(int argc, char **argv)
     // 605.767 - Student to define. Set up camera parameters for initial view.
     g_camera = std::make_shared<cg::CameraNode>();
 
-    // Initialize camera position and orientation
-    // Camera at (0, 0.5, -10), looking toward the scene center.
-    // NearLOD (~8 units away) -> HIGH detail; FarLOD (~20 units away) -> LOW detail.
-    g_camera->set_position_and_look_at_pt(cg::Point3(0.0f, 0.5f, -10.0f), cg::Point3(0.0f, 0.0f, 3.0f));
-    g_camera->set_view_up(cg::Vector3(0.0f, 1.0f, 0.0f));  // Y is up
-    // Initialize view volume for ray tracing
+    // Initialize camera — preset 1 (wide shot)
+    const CameraPreset &init = PRESETS[0];
+    g_camera->set_position_and_look_at_pt(init.pos, init.target);
+    g_camera->set_view_up(cg::Vector3(0.0f, 1.0f, 0.0f));
     g_camera->set_view_volume(
         g_image_width, g_image_height, g_field_of_view, g_near_plane_distance, g_far_plane_distance);
-
-    // Initialise Bezier curve (forward-difference state) before scene construction
-    // so construct_scene() can read the initial position for the animated sphere.
-    g_bezier_curve = std::make_unique<cg::BezierCurve>(
-        CURVE_P0, CURVE_P1, CURVE_P2, CURVE_P3, CURVE_STEPS);
 
     // Construct the scene, pass in the camera node to add to the root node.
     auto scene_root = construct_scene(g_camera);
