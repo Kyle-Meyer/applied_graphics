@@ -81,9 +81,9 @@ hierarchical BV culling.
 
 ---
 
-## Week 4 (Apr 8–14) — Normal Mapping + Sand Sparkle
+## Week 4 (Apr 8–14) — Normal Mapping + Sand Sparkle + Adaptive Super-Sampling
 
-**Goal:** Obelisk surface has stone texture detail; sand sparkles blue under moonlight.
+**Goal:** Obelisk surface has stone texture detail; sand sparkles blue under moonlight; edges and high-contrast regions are crisp without uniform oversampling.
 
 ### Normal mapping in the ray tracer
 At each mesh/patch hit point, before shading:
@@ -110,7 +110,51 @@ vec3  sparkle_color = vec3(0.3, 0.6, 1.0) * sparkle * shadow_factor;
 - [ ] Implement sparkle term in sand material's `shade()` method
 - [ ] Tune density threshold and color until it reads as moonlit quartz glinting
 
-**Milestone:** Obelisk looks carved and polished; sand has scattered blue-white glints.
+### Adaptive super-sampling
+Standard uniform AA casts N×N rays per pixel everywhere — expensive. Adaptive
+super-sampling concentrates samples only where they matter (object edges, shadow
+penumbrae, sparkle glints) and uses a single ray where the image is smooth.
+
+Algorithm:
+1. **Corner sample pass** — cast one ray at each corner of the pixel (4 rays).
+   Compute luminance of each result.
+2. **Contrast test** — if `max(luminance) − min(luminance) > threshold` the pixel
+   needs more samples; otherwise average the 4 corners and move on.
+3. **Recursive subdivision** — split the pixel into 4 sub-pixels; recurse on each
+   (up to `max_depth = 2`, giving at most 4² = 16 samples per pixel).
+4. Final pixel color = average of all leaf samples.
+
+```
+// Pseudocode for one pixel
+Color adaptive_sample(float x, float y, float size, int depth) {
+    Color c[4] = { trace(x,       y      ),   // bottom-left
+                   trace(x+size,  y      ),   // bottom-right
+                   trace(x,       y+size ),   // top-left
+                   trace(x+size,  y+size ) }; // top-right
+    if (depth >= max_depth || contrast(c) < threshold)
+        return average(c);
+    float half = size * 0.5f;
+    return 0.25f * (adaptive_sample(x,      y,      half, depth+1) +
+                    adaptive_sample(x+half, y,      half, depth+1) +
+                    adaptive_sample(x,      y+half, half, depth+1) +
+                    adaptive_sample(x+half, y+half, half, depth+1));
+}
+```
+
+- [ ] Implement `adaptive_sample()` in `RayTracer` — share the pixel-sampling path
+  with the existing uniform AA so both modes call a common `trace_pixel()` helper
+- [ ] Contrast metric: `max_luminance − min_luminance`; threshold ≈ 0.1 (tune)
+- [ ] `max_depth = 2` (up to 16 samples at edges, 4 samples in flat regions)
+- [ ] Add `a` key cycle: **off → uniform 2×2 → adaptive** (3-way toggle)
+  - Off: 1 centre ray per pixel
+  - Uniform 2×2: 4 jittered rays per pixel (current behaviour)
+  - Adaptive: recursive subdivision with contrast test
+- [ ] Print sample statistics (avg samples/pixel) to console so contrast can be
+  shown in the presentation
+- [ ] Verify: edges around obelisk and shadow penumbra show crisp AA; open sky
+  (constant colour) uses only 4 samples
+
+**Milestone:** Obelisk looks carved and polished; sand has scattered blue-white glints; silhouette edges are alias-free with no perceptible cost in flat regions.
 
 ---
 
@@ -126,6 +170,7 @@ vec3  sparkle_color = vec3(0.3, 0.6, 1.0) * sparkle * shadow_factor;
   - `m` — toggle normal map on/off (before/after comparison for slides)
   - `k` — toggle sparkle on/off
   - `s` — toggle soft shadows → hard shadows (shows N=1 vs N=4+ shadow rays)
+  - `a` — cycle AA mode: off → uniform 2×2 → adaptive super-sampling
 - [ ] Write README updates (scene description, new keyboard commands, build instructions)
 - [ ] Create 5–7 slide presentation:
   - Slide 1: title + scene concept (sketch or early screenshot)
@@ -133,8 +178,9 @@ vec3  sparkle_color = vec3(0.3, 0.6, 1.0) * sparkle * shadow_factor;
   - Slide 3: hard vs. soft shadow comparison screenshots
   - Slide 4: normal mapping in a ray tracer — TBN at hit point diagram
   - Slide 5: normal map on/off comparison (obelisk + sand)
-  - Slide 6: sand sparkle — hash function explanation + before/after
-  - Slide 7: LOD + BV culling — hierarchy diagram, culling console output screenshot
+  - Slide 6: adaptive super-sampling — algorithm diagram, contrast metric, sample-count heatmap
+  - Slide 7: AA comparison: off / uniform / adaptive — closeup of obelisk edge + sample count stats
+  - Slide 8: sand sparkle + LOD + BV culling overview
 - [ ] Take all screenshots for slides + README
 - [ ] Final build test on clean checkout; verify no stray asset paths
 
@@ -151,7 +197,8 @@ vec3  sparkle_color = vec3(0.3, 0.6, 1.0) * sparkle * shadow_factor;
 | Bezier patch obelisk geometry is hard to get right | Fall back to a simple tapered box mesh built from triangles — still demonstrates normal mapping |
 | Sand sparkle looks like noise, not glints | Increase hash threshold (fewer, brighter glints) and add a view-dependent falloff so only near-grazing angles sparkle |
 | Instructor requires shadow maps specifically | Implement shadow map in SampleProject as a separate demo; ray tracer scene demonstrates equivalent technique |
-| Running out of time | Drop sparkle and area light sampling; hard shadows + normal mapping on obelisk alone is a complete demo |
+| Adaptive sampling is slow to converge | Cap `max_depth=2` (16 samples max); the contrast threshold avoids spending samples in smooth sky regions |
+| Running out of time | Drop sparkle; hard shadows + normal mapping + adaptive AA is still a three-technique demo |
 
 ---
 
