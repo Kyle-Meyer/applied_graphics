@@ -68,6 +68,9 @@ const float DEPTH_THRESHOLD = 0.025f;
 // Anti-aliasing toggle (supersampling + post-process AA)
 bool g_anti_aliasing = true;
 
+// Soft shadow toggle (area light disc sampling vs. hard binary shadows)
+bool g_soft_shadows = true;
+
 // Ray Tracer
 cg::RayTracer *g_ray_tracer = 0;
 
@@ -568,6 +571,14 @@ cg::EventType handle_key_event(const SDL_Event &event)
             result = cg::EventType::REDRAW;
             break;
 
+        // Toggle soft/hard shadows
+        case SDLK_S:
+            g_soft_shadows = !g_soft_shadows;
+            g_ray_tracer->set_soft_shadows(g_soft_shadows);
+            std::cout << "Shadows: " << (g_soft_shadows ? "SOFT (8 rays)" : "HARD (1 ray)") << std::endl;
+            result = cg::EventType::REDRAW;
+            break;
+
         // Camera presets: 1=wide, 2=ground level, 3=close rock
         case SDLK_1: case SDLK_2: case SDLK_3:
         {
@@ -633,6 +644,7 @@ int main(int argc, char **argv)
     std::cout << "p,P - Pitch camera\n";
     std::cout << "h,H - Heading camera\n";
     std::cout << "a   - Toggle anti-aliasing\n";
+    std::cout << "s   - Toggle soft/hard shadows\n";
     std::cout << "1   - Wide shot (obelisk + shadow sweep)\n";
     std::cout << "2   - Ground level (sand sparkle + shadow drama)\n";
     std::cout << "3   - Close rock (foreground detail)\n";

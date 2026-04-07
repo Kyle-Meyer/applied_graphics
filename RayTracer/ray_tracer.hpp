@@ -57,22 +57,33 @@ class RayTracer
      */
     void add_light(LightNode *light);
 
+    /**
+     * Enable or disable soft shadows (area light disc sampling).
+     * When enabled, N shadow rays are cast toward random points on the moon disc.
+     * When disabled, a single ray is cast toward the disc centre (hard shadows).
+     * @param  enable  True for soft shadows, false for hard.
+     */
+    void set_soft_shadows(bool enable);
+
   private:
     Lighting                   lighting_;
     std::shared_ptr<SceneNode> scene_root_;
     std::vector<LightNode *>   lights_;
 
+    bool  soft_shadows_enabled_;
+    int   shadow_samples_;   // N rays per hit point when soft shadows are on
+    float disc_radius_;      // radius of the moon disc (world units)
+
     /**
-     * Tests if the intersect point is in shadow with respect to the
-     * specified light position.
+     * Computes the fraction of the light disc visible from int_pt (0 = fully
+     * shadowed, 1 = fully lit).  With soft_shadows_enabled_ = false this
+     * degenerates to a binary 0/1 hard shadow test.
      * @param   int_pt       Intersection point
-     * @param   light_pos    Light position
-     * @param   current_obj  Current object. If this object is convex we
-     *                      can avoid a shadow computation.
-     * @return  Returns true if there is an occluding object between
-     *          the light and the intersect point, false if not.
-     **/
-    bool in_shadow(const Point3 &int_pt, Point3 &light_pos, SceneNode *current_obj);
+     * @param   light_pos    Light position (or directional-light anchor point)
+     * @param   current_obj  Current object, used to skip self-intersection.
+     * @return  Shadow factor in [0, 1].
+     */
+    float shadow_factor(const Point3 &int_pt, Point3 &light_pos, SceneNode *current_obj);
 };
 
 } // namespace cg

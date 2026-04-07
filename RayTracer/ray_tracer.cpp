@@ -3,7 +3,9 @@
 
 #include "geometry/geometry.hpp"
 
+#include <cmath>
 #include <iostream>
+#include <random>
 
 namespace cg
 {
@@ -13,8 +15,17 @@ RayTracer::RayTracer(std::shared_ptr<SceneNode> scene_root)
     scene_root_ = scene_root;
 
     // Initialize lighting support. Set the global ambient here.
-
     lighting_.set_ambient(Color3(0.25f, 0.25f, 0.25f));
+
+    // Soft shadow defaults: 8 samples, disc radius 2 world-units, enabled.
+    soft_shadows_enabled_ = true;
+    shadow_samples_       = 8;
+    disc_radius_          = 2.0f;
+}
+
+void RayTracer::set_soft_shadows(bool enable)
+{
+    soft_shadows_enabled_ = enable;
 }
 
 RayTracer::~RayTracer() {}
@@ -83,20 +94,20 @@ Color3 RayTracer::trace_ray(Ray &ray)
     // Iterate through all lights
     for(LightNode *light : lights_)
     {
-        // Get light position
+        // Get light position (or directional-light anchor for w=0 lights)
         Point3 light_pos = light->get_position();
 
-        // Check if point is in shadow with respect to this light
-        if(!in_shadow(int_pt, light_pos, nearest_object))
+        // Compute shadow factor: 0=fully shadowed, 1=fully lit, fraction=soft penumbra
+        float sf = shadow_factor(int_pt, light_pos, nearest_object);
+        if(sf > 0.0f)
         {
-            // Not in shadow - compute diffuse and specular contribution
+            // Compute diffuse and specular contribution, then scale by shadow factor
             Color3 diffuse, specular;
             lighting_.local_contribution(light, material, int_pt, normal, diffuse, specular);
 
-            // Add light contribution
-            color.r += diffuse.r + specular.r;
-            color.g += diffuse.g + specular.g;
-            color.b += diffuse.b + specular.b;
+            color.r += (diffuse.r + specular.r) * sf;
+            color.g += (diffuse.g + specular.g) * sf;
+            color.b += (diffuse.b + specular.b) * sf;
         }
     }
 
@@ -201,25 +212,64 @@ void RayTracer::set_view_position(const Point3 &pos) { lighting_.set_view_positi
 
 void RayTracer::add_light(LightNode *light) { lights_.push_back(light); }
 
-bool RayTracer::in_shadow(const Point3 &int_pt, Point3 &light_pos, SceneNode *current_obj)
+float RayTracer::shadow_factor(const Point3 &int_pt, Point3 &light_pos, SceneNode *current_obj)
 {
-    // Construct a shadow ray from the intersection point toward the light
+    // Base direction from hit point toward the light centre
     Vector3 to_light(int_pt, light_pos);
-    float   distance_to_light = to_light.norm();
+    float   dist_to_light = to_light.norm();
     to_light.normalize();
 
-    // Offset the ray origin slightly to prevent self-intersection
+    // Offset origin to avoid self-intersection
     Point3 shadow_origin = int_pt + to_light * EPSILON;
 
-    // Create the shadow ray
-    Ray3 shadow_ray(shadow_origin, to_light);
+    const int n = soft_shadows_enabled_ ? shadow_samples_ : 1;
 
-    // Set up scene state - store current object so convex objects can skip self-test
-    SceneState current_state;
-    current_state.geometry_node = current_obj;
+    if(n == 1)
+    {
+        // Hard shadow: single ray toward the light centre
+        Ray3       shadow_ray(shadow_origin, to_light);
+        SceneState state;
+        state.geometry_node = current_obj;
+        return scene_root_->does_intersect_exist(shadow_ray, dist_to_light, state) ? 0.0f : 1.0f;
+    }
 
-    // Check if any object blocks the path to the light
-    return scene_root_->does_intersect_exist(shadow_ray, distance_to_light, current_state);
+    // Soft shadow: build an orthonormal disc basis perpendicular to to_light
+    Vector3 up(0.0f, 1.0f, 0.0f);
+    if(fabsf(to_light.dot(up)) > 0.99f) up = Vector3(1.0f, 0.0f, 0.0f);
+    Vector3 disc_u = to_light.cross(up);  disc_u.normalize();
+    Vector3 disc_v = to_light.cross(disc_u); disc_v.normalize();
+
+    // Thread-local RNG — safe for the multithreaded render path
+    static thread_local std::mt19937                          rng(std::random_device{}());
+    static thread_local std::uniform_real_distribution<float> rand01(0.0f, 1.0f);
+
+    int lit = 0;
+    for(int i = 0; i < n; ++i)
+    {
+        // Uniform disc sample via polar coordinates (no rejection loop needed)
+        float angle = rand01(rng) * 2.0f * static_cast<float>(M_PI);
+        float r     = disc_radius_ * sqrtf(rand01(rng));
+        float ox    = r * cosf(angle);
+        float oy    = r * sinf(angle);
+
+        // Offset the light anchor point on the disc plane
+        Point3 sample_pos(
+            light_pos.x + disc_u.x * ox + disc_v.x * oy,
+            light_pos.y + disc_u.y * ox + disc_v.y * oy,
+            light_pos.z + disc_u.z * ox + disc_v.z * oy);
+
+        Vector3 to_sample(int_pt, sample_pos);
+        float   dist_sample = to_sample.norm();
+        to_sample.normalize();
+
+        Ray3       shadow_ray(int_pt + to_sample * EPSILON, to_sample);
+        SceneState state;
+        state.geometry_node = current_obj;
+        if(!scene_root_->does_intersect_exist(shadow_ray, dist_sample, state))
+            ++lit;
+    }
+
+    return static_cast<float>(lit) / static_cast<float>(n);
 }
 
 } // namespace cg
