@@ -20,6 +20,7 @@
 #include "RayTracer/functional_texture.hpp"
 #include "RayTracer/lighting.hpp"
 #include "RayTracer/material_node.hpp"
+#include "RayTracer/normal_map_node.hpp"
 #include "RayTracer/ray_tracer.hpp"
 #include "RayTracer/rt_sphere_node.hpp"
 #include "RayTracer/rt_mesh_node.hpp"
@@ -32,6 +33,7 @@
 #include "assimp/scene.h"
 #include "assimp/postprocess.h"
 
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -65,8 +67,12 @@ std::unique_ptr<cg::Framebuffer> g_frame_buffer;
 int32_t     g_max_depth = 8;
 const float DEPTH_THRESHOLD = 0.025f;
 
-// Anti-aliasing toggle (supersampling + post-process AA)
-bool g_anti_aliasing = true;
+// Anti-aliasing mode: 0=off, 1=uniform 2x2, 2=adaptive
+int g_aa_mode = 0;
+
+// Adaptive AA sample statistics (reset each render)
+static std::atomic<int64_t> g_aa_samples{0};
+static std::atomic<int64_t> g_aa_pixels{0};
 
 // Soft shadow toggle (area light disc sampling vs. hard binary shadows)
 bool g_soft_shadows = true;
@@ -104,7 +110,8 @@ static std::shared_ptr<cg::RTMeshNode> load_obj_mesh(const std::string &filename
     Assimp::Importer importer;
     const aiScene *ai = importer.ReadFile(
         info.file_path,
-        aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices);
+        aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices |
+        aiProcess_CalcTangentSpace | aiProcess_GenUVCoords);
 
     if (!ai || !ai->mNumMeshes)
     {
@@ -139,7 +146,28 @@ static std::shared_ptr<cg::RTMeshNode> load_obj_mesh(const std::string &filename
         }
     }
 
-    return std::make_shared<cg::RTMeshNode>(vertices, faces);
+    auto node = std::make_shared<cg::RTMeshNode>(vertices, faces);
+
+    // Extract per-vertex UV coords and tangents when available
+    if (mesh->HasTextureCoords(0) && mesh->HasTangentsAndBitangents())
+    {
+        std::vector<cg::Point2>   uvs;
+        std::vector<cg::Vector3>  tangents;
+        uvs.reserve(mesh->mNumVertices);
+        tangents.reserve(mesh->mNumVertices);
+
+        for (uint32_t i = 0; i < mesh->mNumVertices; ++i)
+        {
+            uvs.emplace_back(mesh->mTextureCoords[0][i].x,
+                             mesh->mTextureCoords[0][i].y);
+            tangents.emplace_back(mesh->mTangents[i].x,
+                                  mesh->mTangents[i].y,
+                                  mesh->mTangents[i].z);
+        }
+        node->set_tangents_and_uvs(uvs, tangents);
+    }
+
+    return node;
 }
 
 /**
@@ -255,14 +283,20 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     auto scene_node = std::make_shared<cg::SceneNode>();
 
     // ---------- SAND FLOOR (large sphere trick) ----------
-    // Warm sandy colour with low-medium specular — will receive normal map in Week 4
+    // Warm sandy colour with low-medium specular.
     auto floor_mat = std::make_shared<cg::MaterialNode>();
     floor_mat->set_ambient_and_diffuse(cg::Color4(0.76f, 0.65f, 0.42f, 1.0f)); // sand
     floor_mat->set_specular(cg::Color4(0.25f, 0.22f, 0.15f, 1.0f));
     floor_mat->set_shininess(12.0f);
+    // Moonlit quartz sparkle: ~3% of grains glint blue-white
+    floor_mat->enable_sparkle(0.97f, 80.0f, cg::Color3(0.3f, 0.6f, 1.0f), 3.0f);
     auto floor_sphere = std::make_shared<cg::RTSphereNode>(
         cg::Point3(0.0f, -1001.0f, 0.0f), 1000.0f);  // surface at y=-1
-    floor_mat->add_child(floor_sphere);
+    // Normal map (sand grain detail). Provide a PNG/JPG; NormalMapNode silently
+    // skips perturbation if the file is not found.
+    auto floor_nm = std::make_shared<cg::NormalMapNode>("sand_normal.png", 0.6f);
+    floor_nm->add_child(floor_sphere);
+    floor_mat->add_child(floor_nm);
     scene_node->add_child(floor_mat);
 
     // ---------- OBELISK ----------
@@ -275,7 +309,11 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
 
     auto obelisk_xform = std::make_shared<cg::RTTransformNode>();
     obelisk_xform->translate(0.0f, -1.0f, 2.0f); // base on sand, slightly in front
-    obelisk_xform->add_child(make_obelisk());
+    // Normal map gives the obelisk a subtle stone/granite texture.
+    // Strength 0.4 keeps the smooth glistening feel while adding surface detail.
+    auto obelisk_nm = std::make_shared<cg::NormalMapNode>("stone_normal.png", 0.4f);
+    obelisk_nm->add_child(make_obelisk());
+    obelisk_xform->add_child(obelisk_nm);
 
     // BV: world-space AABB covering obelisk base (-0.6,-1,1.6) to apex (0.6,7.5,2.4)
     auto obelisk_bv = std::make_shared<cg::AABBNode>();
@@ -373,6 +411,62 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     return scene_node;
 }
 
+// Returns perceived luminance of a color
+static float luminance(const cg::Color3 &c)
+{
+    return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+}
+
+// Recursive adaptive sampling for one pixel sub-region.
+// (x, y)   — pixel-space top-left of the sub-region
+// size      — width/height of the sub-region in pixel units (1.0 = full pixel)
+// depth     — current recursion depth (0 = first call per pixel)
+// max_depth — stop subdividing at this depth (2 → up to 4^2 = 16 leaf samples)
+// threshold — luminance contrast threshold above which we subdivide (~0.1)
+static cg::Color3 adaptive_sample(float x, float y, float size,
+                                  int depth, int max_depth, float threshold)
+{
+    // Sample four corners of this sub-region
+    cg::Color3 c[4];
+    cg::Ray3 r0 = g_camera->construct_ray(x,        y       );
+    cg::Ray3 r1 = g_camera->construct_ray(x + size, y       );
+    cg::Ray3 r2 = g_camera->construct_ray(x,        y + size);
+    cg::Ray3 r3 = g_camera->construct_ray(x + size, y + size);
+    c[0] = g_ray_tracer->trace_ray(r0, g_max_depth, DEPTH_THRESHOLD);
+    c[1] = g_ray_tracer->trace_ray(r1, g_max_depth, DEPTH_THRESHOLD);
+    c[2] = g_ray_tracer->trace_ray(r2, g_max_depth, DEPTH_THRESHOLD);
+    c[3] = g_ray_tracer->trace_ray(r3, g_max_depth, DEPTH_THRESHOLD);
+
+    g_aa_samples += 4;
+
+    // Check contrast — if flat or at max depth, return average of corners
+    float lmin = luminance(c[0]), lmax = lmin;
+    for (int i = 1; i < 4; ++i)
+    {
+        float l = luminance(c[i]);
+        if (l < lmin) lmin = l;
+        if (l > lmax) lmax = l;
+    }
+
+    if (depth >= max_depth || (lmax - lmin) < threshold)
+    {
+        return cg::Color3((c[0].r + c[1].r + c[2].r + c[3].r) * 0.25f,
+                          (c[0].g + c[1].g + c[2].g + c[3].g) * 0.25f,
+                          (c[0].b + c[1].b + c[2].b + c[3].b) * 0.25f);
+    }
+
+    // High contrast — subdivide into 4 sub-regions and recurse
+    float half = size * 0.5f;
+    cg::Color3 q0 = adaptive_sample(x,        y,        half, depth + 1, max_depth, threshold);
+    cg::Color3 q1 = adaptive_sample(x + half, y,        half, depth + 1, max_depth, threshold);
+    cg::Color3 q2 = adaptive_sample(x,        y + half, half, depth + 1, max_depth, threshold);
+    cg::Color3 q3 = adaptive_sample(x + half, y + half, half, depth + 1, max_depth, threshold);
+
+    return cg::Color3((q0.r + q1.r + q2.r + q3.r) * 0.25f,
+                      (q0.g + q1.g + q2.g + q3.g) * 0.25f,
+                      (q0.b + q1.b + q2.b + q3.b) * 0.25f);
+}
+
 void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
 {
     // Sub-pixel offsets for 2x2 supersampling (stratified within pixel)
@@ -382,7 +476,8 @@ void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
     };
 
     // Only supersample on the final pass (block_size == 1) and if AA is enabled.
-    const bool supersample = g_anti_aliasing && (block_size == 1);
+    const bool supersample = (g_aa_mode == 1) && (block_size == 1);
+    const bool adaptive    = (g_aa_mode == 2) && (block_size == 1);
 
     for(int32_t row = start_row; row <= end_row; ++row)
     {
@@ -395,9 +490,16 @@ void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
                 float fx = static_cast<float>(x);
                 float fy = static_cast<float>(y);
 
-                if(supersample)
+                if(adaptive)
                 {
-                    // Trace 4 rays per pixel at sub-pixel positions and average
+                    // Adaptive super-sampling: subdivide only high-contrast regions
+                    cg::Color3 color = adaptive_sample(fx, fy, 1.0f, 0, 2, 0.1f);
+                    g_frame_buffer->set(x, y, color, block_size);
+                    ++g_aa_pixels;
+                }
+                else if(supersample)
+                {
+                    // Uniform 2x2: trace 4 rays per pixel at sub-pixel positions
                     float r = 0.0f, g = 0.0f, b = 0.0f;
                     for(int s = 0; s < 4; ++s)
                     {
@@ -412,7 +514,7 @@ void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
                 }
                 else
                 {
-                    // Single ray for preview passes
+                    // Single ray for preview passes or AA-off final pass
                     cg::Ray3 ray = g_camera->construct_ray(fx, fy);
                     cg::Color3 color = g_ray_tracer->trace_ray(ray, g_max_depth, DEPTH_THRESHOLD);
                     g_frame_buffer->set(x, y, color, block_size);
@@ -435,6 +537,10 @@ void display()
     // Reset culling/LOD print throttles so each render shows fresh output
     cg::AABBNode::reset_rt_print_count();
     cg::LODNode::reset_rt_print_count();
+
+    // Reset adaptive AA statistics
+    g_aa_samples.store(0);
+    g_aa_pixels.store(0);
 
     // Clear the memory framebuffer
     g_frame_buffer->clear();
@@ -459,8 +565,18 @@ void display()
         SDL_GL_SwapWindow(g_sdl_window);
     }
 
-    // Final scene - simple anti-aliasing (without shooting additional rays)
-    if (g_anti_aliasing) g_frame_buffer->anti_alias();
+    // Print adaptive AA statistics after the final pass
+    if (g_aa_mode == 2)
+    {
+        int64_t px = g_aa_pixels.load();
+        int64_t sa = g_aa_samples.load();
+        float avg = (px > 0) ? static_cast<float>(sa) / static_cast<float>(px) : 0.0f;
+        std::cout << "Adaptive AA: " << px << " pixels, avg "
+                  << avg << " samples/pixel\n";
+    }
+
+    // Post-process edge-smoothing pass (all modes)
+    g_frame_buffer->anti_alias();
     SDL_GL_SwapWindow(g_sdl_window);
 }
 
@@ -486,8 +602,8 @@ void display()
         SDL_GL_SwapWindow(g_sdl_window);
     }
 
-    // Final scene - simple anti-aliasing (without shooting additional rays)
-    if (g_anti_aliasing) g_frame_buffer->anti_alias();
+    // Post-process edge-smoothing pass (all modes)
+    g_frame_buffer->anti_alias();
     SDL_GL_SwapWindow(g_sdl_window);
 }
 
@@ -564,12 +680,15 @@ cg::EventType handle_key_event(const SDL_Event &event)
             result = cg::EventType::REDRAW;
             break;
 
-        // Toggle anti-aliasing
+        // Cycle AA mode: 0=off → 1=uniform 2x2 → 2=adaptive → 0
         case SDLK_A:
-            g_anti_aliasing = !g_anti_aliasing;
-            std::cout << "Anti-aliasing: " << (g_anti_aliasing ? "ON" : "OFF") << std::endl;
+        {
+            g_aa_mode = (g_aa_mode + 1) % 3;
+            const char *modes[] = { "OFF", "Uniform 2x2", "Adaptive" };
+            std::cout << "AA mode: " << modes[g_aa_mode] << "\n";
             result = cg::EventType::REDRAW;
             break;
+        }
 
         // Toggle soft/hard shadows
         case SDLK_S:

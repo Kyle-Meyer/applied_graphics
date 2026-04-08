@@ -10,9 +10,30 @@ MaterialNode::MaterialNode()
     reflective_ = false;
     transparent_ = false;
     index_of_refraction_ = 1.0f;
+    sparkle_enabled_ = false;
+    sparkle_threshold_ = 0.97f;
+    sparkle_frequency_ = 80.0f;
+    sparkle_color_ = Color3(0.3f, 0.6f, 1.0f);
+    sparkle_intensity_ = 3.0f;
 
     // Note: color constructors default rgb to 0 and alpha to 1
 }
+
+void MaterialNode::enable_sparkle(float threshold, float frequency,
+                                  const Color3 &color, float intensity)
+{
+    sparkle_enabled_   = true;
+    sparkle_threshold_ = threshold;
+    sparkle_frequency_ = frequency;
+    sparkle_color_     = color;
+    sparkle_intensity_ = intensity;
+}
+
+bool   MaterialNode::has_sparkle()       const { return sparkle_enabled_; }
+float  MaterialNode::sparkle_threshold() const { return sparkle_threshold_; }
+float  MaterialNode::sparkle_frequency() const { return sparkle_frequency_; }
+Color3 MaterialNode::sparkle_color()     const { return sparkle_color_; }
+float  MaterialNode::sparkle_intensity() const { return sparkle_intensity_; }
 
 void MaterialNode::set_ambient(const Color4 &c) { ambient_ = c; }
 

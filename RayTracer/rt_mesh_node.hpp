@@ -53,11 +53,29 @@ class RTMeshNode : public GeometryNode
 
     /**
      * Get the texture coordinate at an intersection point.
-     * Uses barycentric interpolation.
+     * Uses stored per-vertex UV coordinates when available; falls back to
+     * barycentric coordinates otherwise.
      * @param  int_pt  Intersection point on the mesh surface
      * @return Returns the texture coordinate (s, t) at the intersection point
      */
     Point2 get_texture_coord(const Point3 &int_pt) override;
+
+    /**
+     * Get the surface tangent at an intersection point (for TBN normal mapping).
+     * Barycentrically interpolates stored per-vertex tangents.
+     * @param  int_pt  Intersection point on the mesh surface
+     * @return Returns the interpolated tangent vector (object space)
+     */
+    Vector3 get_tangent(const Point3 &int_pt) override;
+
+    /**
+     * Supply per-vertex UV texture coordinates and tangent vectors.
+     * Both vectors must be the same size as the vertex list.
+     * @param  tex_coords  UV coordinates per vertex
+     * @param  tangents    Tangent vectors per vertex (object space)
+     */
+    void set_tangents_and_uvs(const std::vector<Point2> &tex_coords,
+                              const std::vector<Vector3> &tangents);
 
     /**
      * Ray tracing intersect method - finds closest intersection
@@ -84,7 +102,11 @@ class RTMeshNode : public GeometryNode
     std::vector<uint16_t> faces_;
     AABB aabb_;
 
-    // Store last intersection info for normal/texcoord computation
+    // Optional per-vertex UV coords and tangents (set via set_tangents_and_uvs)
+    std::vector<Point2>   tex_coords_;
+    std::vector<Vector3>  tangents_;
+
+    // Store last intersection info for normal/texcoord/tangent computation
     mutable uint32_t last_face_index_;
     mutable float last_bary_u_, last_bary_v_;
 

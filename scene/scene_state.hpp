@@ -106,10 +106,12 @@ struct SceneState
     SceneNode                              *material_node;
     SceneNode                              *geometry_node;
     SceneNode                              *texture_node;
+    SceneNode                              *normal_map_node;
     Matrix4x4                               inverse_matrix;
     std::list<float>                        t_scale_stack;
     std::list<SceneNode *>                  material_stack;
     std::list<SceneNode *>                  texture_stack;
+    std::list<SceneNode *>                  normal_map_stack;
     std::list<Matrix4x4>                    inverse_matrix_stack;
     std::list<Matrix4x4>                    normal_transform_stack;
     std::vector<std::shared_ptr<SceneNode>> light_nodes;
@@ -151,6 +153,17 @@ struct SceneState
      * (or 0 if none are set at this node)
      **/
     void pop_texture();
+
+    /**
+     * Copy current normal map node onto stack
+     **/
+    void push_normal_map();
+
+    /**
+     * Remove the current normal map node from the stack and revert to prior
+     * (or nullptr if none are set at this node)
+     **/
+    void pop_normal_map();
 };
 
 } // namespace cg

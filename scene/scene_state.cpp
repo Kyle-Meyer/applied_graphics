@@ -41,4 +41,12 @@ void SceneState::pop_texture()
     texture_node = (texture_stack.size() > 0) ? texture_stack.back() : nullptr;
 }
 
+void SceneState::push_normal_map() { normal_map_stack.push_back(normal_map_node); }
+
+void SceneState::pop_normal_map()
+{
+    normal_map_stack.pop_back();
+    normal_map_node = (normal_map_stack.size() > 0) ? normal_map_stack.back() : nullptr;
+}
+
 } // namespace cg

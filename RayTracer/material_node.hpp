@@ -148,6 +148,24 @@ class MaterialNode : public SceneNode
     bool is_transparent() const;
 
     /**
+     * Enable moonlit sparkle glinting on this material.
+     * Uses a UV-domain hash to mark ~(1-threshold)*100% of grains as
+     * reflective, then adds sparkle_color * intensity additively.
+     * @param threshold   Hash cutoff in [0,1]; 0.97 = ~3% of grains sparkle
+     * @param frequency   UV scale (higher = finer grain, e.g. 80)
+     * @param color       Sparkle tint color (e.g. moonlit blue-white)
+     * @param intensity   Peak brightness multiplier (e.g. 3.0)
+     */
+    void enable_sparkle(float threshold, float frequency,
+                        const Color3 &color, float intensity);
+
+    bool    has_sparkle()       const;
+    float   sparkle_threshold() const;
+    float   sparkle_frequency() const;
+    Color3  sparkle_color()     const;
+    float   sparkle_intensity() const;
+
+    /**
      * Draw. Simply sets the material properties. Later on when we
      * add more attribute control probably want to push/pop attributes
      */
@@ -174,6 +192,13 @@ class MaterialNode : public SceneNode
     Color3  global_reflection_;   // Global reflected attenuation term
     Color3  global_refraction_;   // Global transmitted attenuation term
     float   index_of_refraction_; // Index of refraction
+
+    // Sparkle effect parameters
+    bool   sparkle_enabled_;
+    float  sparkle_threshold_;
+    float  sparkle_frequency_;
+    Color3 sparkle_color_;
+    float  sparkle_intensity_;
 };
 
 } // namespace cg

@@ -57,6 +57,14 @@ class RTSphereNode : public GeometryNode
     Point2 get_texture_coord(const Point3 &int_pt) override;
 
     /**
+     * Get the surface tangent (dP/dθ) at an intersection point.
+     * Analytic tangent along the azimuthal direction.
+     * @param  int_pt  Intersection point on the sphere surface
+     * @return Tangent vector in object space (not normalized)
+     */
+    Vector3 get_tangent(const Point3 &int_pt) override;
+
+    /**
      * Update the sphere center (used for animation).
      */
     void set_center(const Point3 &c) { sphere_.center = c; }

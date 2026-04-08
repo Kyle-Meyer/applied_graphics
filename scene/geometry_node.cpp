@@ -24,4 +24,10 @@ Point2 GeometryNode::get_texture_coord(const Point3 &int_pt)
     return Point2(0.0f, 0.0f);
 }
 
+Vector3 GeometryNode::get_tangent(const Point3 &int_pt)
+{
+    // Default implementation — geometry without tangent data returns a fixed tangent
+    return Vector3(1.0f, 0.0f, 0.0f);
+}
+
 } // namespace cg

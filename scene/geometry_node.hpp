@@ -55,6 +55,14 @@ class GeometryNode : public SceneNode
      * @return Returns the texture coordinate (s, t) at the intersection point
      */
     virtual Point2 get_texture_coord(const Point3 &int_pt);
+
+    /**
+     * Get the surface tangent at an intersection point (for TBN normal mapping).
+     * Returns a default tangent if the geometry has no tangent data.
+     * @param  int_pt  Intersection point on the surface
+     * @return Returns a unit-length tangent vector in object space
+     */
+    virtual Vector3 get_tangent(const Point3 &int_pt);
 };
 
 } // namespace cg

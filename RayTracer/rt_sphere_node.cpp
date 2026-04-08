@@ -54,6 +54,18 @@ Point2 RTSphereNode::get_texture_coord(const Point3 &int_pt)
     return Point2(s, t);
 }
 
+Vector3 RTSphereNode::get_tangent(const Point3 &int_pt)
+{
+    // Analytic tangent: d/dθ of spherical parameterization P(θ,φ)
+    // P = (sin(φ)sin(θ), cos(φ), sin(φ)cos(θ))
+    // dP/dθ = (cos(θ), 0, -sin(θ))
+    Vector3 p(sphere_.center, int_pt);
+    p.normalize();
+    // θ = atan2(p.x, p.z)
+    float theta = std::atan2(p.x, p.z);
+    return Vector3(std::cos(theta), 0.0f, -std::sin(theta));
+}
+
 void RTSphereNode::find_closest_intersect(Ray3 ray, SceneState &current_state, SceneState &closest)
 {
     // This is a leaf node - test for intersection with the sphere
@@ -70,6 +82,7 @@ void RTSphereNode::find_closest_intersect(Ray3 ray, SceneState &current_state, S
             closest.geometry_node = this;
             closest.material_node = current_state.material_node;
             closest.texture_node = current_state.texture_node;
+            closest.normal_map_node = current_state.normal_map_node;
 
             // Copy transformation matrices if transforms are required
             if(current_state.transform_required)

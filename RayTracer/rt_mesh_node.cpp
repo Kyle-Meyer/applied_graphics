@@ -106,9 +106,50 @@ Vector3 RTMeshNode::get_normal(const Point3 &int_pt)
 
 Point2 RTMeshNode::get_texture_coord(const Point3 &int_pt)
 {
-    // Simple planar mapping using barycentric coordinates
-    // Maps u,v barycentric to s,t texture coords
+    if (!tex_coords_.empty())
+    {
+        uint16_t i0 = faces_[last_face_index_ * 3];
+        uint16_t i1 = faces_[last_face_index_ * 3 + 1];
+        uint16_t i2 = faces_[last_face_index_ * 3 + 2];
+
+        float w0 = 1.0f - last_bary_u_ - last_bary_v_;
+        float w1 = last_bary_u_;
+        float w2 = last_bary_v_;
+
+        return Point2(
+            tex_coords_[i0].x * w0 + tex_coords_[i1].x * w1 + tex_coords_[i2].x * w2,
+            tex_coords_[i0].y * w0 + tex_coords_[i1].y * w1 + tex_coords_[i2].y * w2);
+    }
+
+    // Fallback: map barycentric u,v directly to s,t
     return Point2(last_bary_u_, last_bary_v_);
+}
+
+Vector3 RTMeshNode::get_tangent(const Point3 &int_pt)
+{
+    if (!tangents_.empty())
+    {
+        uint16_t i0 = faces_[last_face_index_ * 3];
+        uint16_t i1 = faces_[last_face_index_ * 3 + 1];
+        uint16_t i2 = faces_[last_face_index_ * 3 + 2];
+
+        float w0 = 1.0f - last_bary_u_ - last_bary_v_;
+        float w1 = last_bary_u_;
+        float w2 = last_bary_v_;
+
+        Vector3 t = tangents_[i0] * w0 + tangents_[i1] * w1 + tangents_[i2] * w2;
+        t.normalize();
+        return t;
+    }
+
+    return Vector3(1.0f, 0.0f, 0.0f);
+}
+
+void RTMeshNode::set_tangents_and_uvs(const std::vector<Point2> &tex_coords,
+                                      const std::vector<Vector3> &tangents)
+{
+    tex_coords_ = tex_coords;
+    tangents_   = tangents;
 }
 
 void RTMeshNode::find_closest_intersect(Ray3 ray, SceneState &current_state, SceneState &closest)
@@ -139,6 +180,7 @@ void RTMeshNode::find_closest_intersect(Ray3 ray, SceneState &current_state, Sce
             closest.geometry_node = this;
             closest.material_node = current_state.material_node;
             closest.texture_node = current_state.texture_node;
+            closest.normal_map_node = current_state.normal_map_node;
 
             // Store barycentric coords for normal/texcoord interpolation
             last_face_index_ = i / 3;
