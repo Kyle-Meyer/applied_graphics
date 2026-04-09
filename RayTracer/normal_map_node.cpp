@@ -10,6 +10,12 @@
 namespace cg
 {
 
+NormalMapNode::NormalMapNode(float strength)
+    : pixel_map_(nullptr), width_(0), height_(0), strength_(strength)
+{
+    node_type_ = SceneNodeType::PRESENTATION;
+}
+
 NormalMapNode::NormalMapNode(const char *filename, float strength)
     : pixel_map_(nullptr), width_(0), height_(0), strength_(strength)
 {
@@ -69,7 +75,7 @@ void NormalMapNode::fetch_texel(int32_t row, int32_t col,
     b = p[2] * INV255;
 }
 
-Vector3 NormalMapNode::sample(const Point2 &uv) const
+Vector3 NormalMapNode::sample(const Point2 &uv, const Point3 & /*world_pos*/) const
 {
     if (!pixel_map_)
         return Vector3(0.0f, 0.0f, 1.0f);  // Neutral: no perturbation

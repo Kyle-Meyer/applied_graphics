@@ -100,7 +100,7 @@ Color3 RayTracer::trace_ray(Ray &ray)
         {
             T = T * (1.0f / tlen);
             Vector3 B  = normal.cross(T);   // bitangent
-            Vector3 tn = nm->sample(uv);    // tangent-space normal from map
+            Vector3 tn = nm->sample(uv, int_pt);  // tangent-space normal from map
 
             // Rotate tangent-space normal into world space via TBN
             normal = (T * tn.x + B * tn.y + normal * tn.z);

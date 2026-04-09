@@ -11,6 +11,7 @@
 #define __RAY_TRACER_NORMAL_MAP_NODE_HPP__
 
 #include "geometry/point2.hpp"
+#include "geometry/point3.hpp"
 #include "geometry/vector3.hpp"
 #include "scene/scene_node.hpp"
 
@@ -55,15 +56,22 @@ class NormalMapNode : public SceneNode
                                 SceneState &closest) override;
 
     /**
-     * Sample the normal map at UV coordinate (s, t) in [0,1]^2.
-     * Returns the tangent-space normal in [-1,1]^3, blended toward (0,0,1)
-     * by (1 - strength).
-     * @param  uv  Texture coordinate
+     * Sample the bump normal at a surface point.
+     * @param  uv        UV texture coordinate in [0,1]^2
+     * @param  world_pos World-space intersection point (available for
+     *                   procedural shaders that prefer world-space coords)
      * @return Tangent-space normal vector (not necessarily unit length)
      */
-    Vector3 sample(const Point2 &uv) const;
+    virtual Vector3 sample(const Point2 &uv, const Point3 &world_pos) const;
 
     float strength() const { return strength_; }
+
+  protected:
+    /**
+     * Constructor for procedural subclasses that don't load a texture file.
+     * Leaves pixel_map_ null; subclasses must override sample().
+     */
+    explicit NormalMapNode(float strength);
 
   private:
     uint8_t *pixel_map_;

@@ -21,6 +21,7 @@
 #include "RayTracer/lighting.hpp"
 #include "RayTracer/material_node.hpp"
 #include "RayTracer/normal_map_node.hpp"
+#include "RayTracer/sand_bump_node.hpp"
 #include "RayTracer/ray_tracer.hpp"
 #include "RayTracer/rt_sphere_node.hpp"
 #include "RayTracer/rt_mesh_node.hpp"
@@ -292,9 +293,8 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     floor_mat->enable_sparkle(0.97f, 80.0f, cg::Color3(0.3f, 0.6f, 1.0f), 3.0f);
     auto floor_sphere = std::make_shared<cg::RTSphereNode>(
         cg::Point3(0.0f, -1001.0f, 0.0f), 1000.0f);  // surface at y=-1
-    // Normal map (sand grain detail). Provide a PNG/JPG; NormalMapNode silently
-    // skips perturbation if the file is not found.
-    auto floor_nm = std::make_shared<cg::NormalMapNode>("sand_normal.png", 0.6f);
+    // Procedural sand bump shader: wind ripples + fine grain, no texture file needed.
+    auto floor_nm = std::make_shared<cg::SandBumpNode>();
     floor_nm->add_child(floor_sphere);
     floor_mat->add_child(floor_nm);
     scene_node->add_child(floor_mat);
