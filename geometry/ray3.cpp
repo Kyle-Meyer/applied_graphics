@@ -243,37 +243,42 @@ RayTriangleIntersectResult
     
     // If determinant is near zero, ray lies in plane of triangle
     float det = edge1.dot(pvec);
-    
-    // Use backface culling
-    if (det < EPSILON)
+
+    // Double-sided M-T: handles both CCW (det>0) and CW (det<0) wound triangles.
+    // Reject only degenerate/parallel triangles. u/v/t are multiplied by sign(det)
+    // so the bounds checks remain sign-independent.
+    float abs_det = std::abs(det);
+    if (abs_det < 1e-8f)
     {
         return {false, 0.0f, 0.0f, 0.0f};
     }
-    
-    float inv_det = 1.0f / det;
-    
+
+    float sign_det = (det > 0.0f) ? 1.0f : -1.0f;
+    float inv_abs_det = 1.0f / abs_det;
+
     // Calculate distance from v0 to ray origin
     Vector3 tvec(v0, o);
-    
-    // Calculate u parameter and test bounds
-    float u = tvec.dot(pvec) * inv_det;
-    if (u < 0.0f || u > 1.0f)
+
+    // u = (tvec · pvec) * sign(det), checked against [0, abs_det]
+    float u = tvec.dot(pvec) * sign_det;
+    if (u < 0.0f || u > abs_det)
     {
         return {false, 0.0f, 0.0f, 0.0f};
     }
-    
-    // Prepare to test v parameter
+
     Vector3 qvec = tvec.cross(edge1);
-    
-    // Calculate v parameter and test bounds
-    float v = d.dot(qvec) * inv_det;
-    if (v < 0.0f || u + v > 1.0f)
+
+    // v = (d · qvec) * sign(det)
+    float v = d.dot(qvec) * sign_det;
+    if (v < 0.0f || u + v > abs_det)
     {
         return {false, 0.0f, 0.0f, 0.0f};
     }
-    
-    // Calculate t - ray intersection distance
-    float t = edge2.dot(qvec) * inv_det;
+
+    // Normalize to barycentric coords and compute t
+    u *= inv_abs_det;
+    v *= inv_abs_det;
+    float t = edge2.dot(qvec) * sign_det * inv_abs_det;
     
     if (t < 0.0f)
     {

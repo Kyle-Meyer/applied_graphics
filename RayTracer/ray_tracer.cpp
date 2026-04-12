@@ -78,6 +78,12 @@ Color3 RayTracer::trace_ray(Ray &ray)
         normal.normalize();
     }
 
+    // Two-sided shading: if the surface normal faces away from the camera
+    // (i.e. we hit a back face or the mesh has inward normals), flip it.
+    // This handles meshes with CW winding or inconsistent normal direction.
+    if (normal.dot(Vector3(-ray.d.x, -ray.d.y, -ray.d.z)) < 0.0f)
+        normal = normal * -1.0f;
+
     // Apply normal map perturbation if this object has a normal map
     if (closest.normal_map_node)
     {

@@ -106,9 +106,8 @@ class RTMeshNode : public GeometryNode
     std::vector<Point2>   tex_coords_;
     std::vector<Vector3>  tangents_;
 
-    // Store last intersection info for normal/texcoord/tangent computation
-    mutable uint32_t last_face_index_;
-    mutable float last_bary_u_, last_bary_v_;
+    // Per-thread hit cache — see rt_mesh_node.cpp tl_hit_cache for storage.
+    // (Removed mutable instance members to fix multi-thread race condition)
 
     /**
      * Compute vertex normals from face normals (for simple constructor)

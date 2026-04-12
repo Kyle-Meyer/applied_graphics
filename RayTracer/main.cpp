@@ -76,7 +76,7 @@ static std::atomic<int64_t> g_aa_samples{0};
 static std::atomic<int64_t> g_aa_pixels{0};
 
 // Soft shadow toggle (area light disc sampling vs. hard binary shadows)
-bool g_soft_shadows = true;
+bool g_soft_shadows = false;  // off for bunny test — enable with 's' key
 
 // Ray Tracer
 cg::RayTracer *g_ray_tracer = 0;
@@ -87,19 +87,27 @@ std::vector<cg::LightNode *> g_lights;
 // Scene construction
 std::shared_ptr<cg::SceneNode> g_scene_root;
 
-// ---------- Desert scene camera presets ----------
+// ---------- Camera presets ----------
+// Desert scene camera presets
 struct CameraPreset { cg::Point3 pos; cg::Point3 target; };
 static const CameraPreset PRESETS[] = {
-    { cg::Point3(0.0f,  3.0f, -15.0f), cg::Point3(0.0f, 1.5f,  5.0f) }, // 1: wide — obelisk + shadow sweep
-    { cg::Point3(3.0f,  0.2f,  -8.0f), cg::Point3(0.0f, 0.0f,  5.0f) }, // 2: ground level — sparkle + shadow drama
-    { cg::Point3(-5.0f, 1.5f,  -5.0f), cg::Point3(-3.5f,-1.0f,-3.0f) }, // 3: close rock — foreground detail
+    { cg::Point3(0.0f,  3.0f, -15.0f), cg::Point3(0.0f, 1.5f,  5.0f) }, // 1: wide shot
+    { cg::Point3(3.0f,  0.2f,  -8.0f), cg::Point3(0.0f, 0.0f,  5.0f) }, // 2: ground level
+    { cg::Point3(-3.0f, 1.5f,  -2.0f), cg::Point3(0.0f, 0.5f,  5.0f) }, // 3: close rock
+    // Desert scene presets (restore when switching back):
+    // { cg::Point3(0.0f,  3.0f, -15.0f), cg::Point3(0.0f, 1.5f,  5.0f) },
+    // { cg::Point3(3.0f,  0.2f,  -8.0f), cg::Point3(0.0f, 0.0f,  5.0f) },
+    // { cg::Point3(-5.0f, 1.5f,  -5.0f), cg::Point3(-3.5f,-1.0f,-3.0f) },
 };
 
 /**
  * Load an OBJ file via Assimp and return it as an RTMeshNode.
  * Returns nullptr and prints an error if the file is not found or fails to load.
+ * @param flip_winding  Add aiProcess_FlipWindingOrder — use when the OBJ has CW faces
+ *                      (e.g. Stanford bunny from Meshlab) so backface culling works correctly.
  */
-static std::shared_ptr<cg::RTMeshNode> load_obj_mesh(const std::string &filename)
+static std::shared_ptr<cg::RTMeshNode> load_obj_mesh(const std::string &filename,
+                                                      bool flip_winding = false)
 {
     cg::FileInfo info = cg::locate_path_for_filename(filename);
     if (!info.found)
@@ -108,11 +116,17 @@ static std::shared_ptr<cg::RTMeshNode> load_obj_mesh(const std::string &filename
         return nullptr;
     }
 
+    // Load flags: triangulate quads, join duplicate vertices so smooth normals
+    // can average across shared edges, then generate smooth normals for meshes
+    // that don't have them (e.g. Stanford bunny).
+    unsigned int flags = aiProcess_Triangulate |
+                         aiProcess_JoinIdenticalVertices |
+                         aiProcess_GenSmoothNormals;
+    if (flip_winding)
+        flags |= aiProcess_FlipWindingOrder;
+
     Assimp::Importer importer;
-    const aiScene *ai = importer.ReadFile(
-        info.file_path,
-        aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices |
-        aiProcess_CalcTangentSpace | aiProcess_GenUVCoords);
+    const aiScene *ai = importer.ReadFile(info.file_path, flags);
 
     if (!ai || !ai->mNumMeshes)
     {
@@ -121,52 +135,61 @@ static std::shared_ptr<cg::RTMeshNode> load_obj_mesh(const std::string &filename
         return nullptr;
     }
 
-    const aiMesh *mesh = ai->mMeshes[0];
+    std::cout << "load_obj_mesh: '" << filename << "' — "
+              << ai->mNumMeshes << " submesh(es)\n";
 
+    // Merge all submeshes into one vertex + face list.
+    // Face indices are offset by the running vertex count so they remain valid.
     std::vector<cg::VertexAndNormal> vertices;
-    vertices.reserve(mesh->mNumVertices);
-    for (uint32_t i = 0; i < mesh->mNumVertices; ++i)
-    {
-        cg::VertexAndNormal v;
-        v.vertex = cg::Point3(mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z);
-        if (mesh->HasNormals())
-            v.normal = cg::Vector3(mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z);
-        vertices.push_back(v);
-    }
+    std::vector<uint16_t>            faces;
+    std::vector<cg::Point2>          uvs;
+    std::vector<cg::Vector3>         tangents;
+    bool has_uvs_and_tangents = true;
 
-    std::vector<uint16_t> faces;
-    faces.reserve(mesh->mNumFaces * 3);
-    for (uint32_t i = 0; i < mesh->mNumFaces; ++i)
+    for (uint32_t m = 0; m < ai->mNumMeshes; ++m)
     {
-        const aiFace &f = mesh->mFaces[i];
-        if (f.mNumIndices == 3)
-        {
-            faces.push_back(static_cast<uint16_t>(f.mIndices[0]));
-            faces.push_back(static_cast<uint16_t>(f.mIndices[1]));
-            faces.push_back(static_cast<uint16_t>(f.mIndices[2]));
-        }
-    }
-
-    auto node = std::make_shared<cg::RTMeshNode>(vertices, faces);
-
-    // Extract per-vertex UV coords and tangents when available
-    if (mesh->HasTextureCoords(0) && mesh->HasTangentsAndBitangents())
-    {
-        std::vector<cg::Point2>   uvs;
-        std::vector<cg::Vector3>  tangents;
-        uvs.reserve(mesh->mNumVertices);
-        tangents.reserve(mesh->mNumVertices);
+        const aiMesh *mesh = ai->mMeshes[m];
+        const uint16_t vertex_offset = static_cast<uint16_t>(vertices.size());
 
         for (uint32_t i = 0; i < mesh->mNumVertices; ++i)
         {
-            uvs.emplace_back(mesh->mTextureCoords[0][i].x,
-                             mesh->mTextureCoords[0][i].y);
-            tangents.emplace_back(mesh->mTangents[i].x,
-                                  mesh->mTangents[i].y,
-                                  mesh->mTangents[i].z);
+            cg::VertexAndNormal v;
+            v.vertex = cg::Point3(mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z);
+            v.normal = cg::Vector3(0.0f, 0.0f, 0.0f);
+            if (mesh->HasNormals())
+                v.normal = cg::Vector3(mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z);
+            vertices.push_back(v);
+
+            if (mesh->HasTextureCoords(0) && mesh->HasTangentsAndBitangents())
+            {
+                uvs.emplace_back(mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y);
+                tangents.emplace_back(mesh->mTangents[i].x, mesh->mTangents[i].y, mesh->mTangents[i].z);
+            }
+            else
+            {
+                has_uvs_and_tangents = false;
+            }
         }
-        node->set_tangents_and_uvs(uvs, tangents);
+
+        for (uint32_t i = 0; i < mesh->mNumFaces; ++i)
+        {
+            const aiFace &f = mesh->mFaces[i];
+            if (f.mNumIndices == 3)
+            {
+                faces.push_back(vertex_offset + static_cast<uint16_t>(f.mIndices[0]));
+                faces.push_back(vertex_offset + static_cast<uint16_t>(f.mIndices[1]));
+                faces.push_back(vertex_offset + static_cast<uint16_t>(f.mIndices[2]));
+            }
+        }
     }
+
+    std::cout << "  total: " << vertices.size() << " vertices, "
+              << faces.size() / 3 << " triangles\n";
+
+    auto node = std::make_shared<cg::RTMeshNode>(vertices, faces);
+
+    if (has_uvs_and_tangents && !uvs.empty())
+        node->set_tangents_and_uvs(uvs, tangents);
 
     return node;
 }
@@ -270,6 +293,7 @@ make_bezier_patch_mesh(const std::array<cg::Point3, 16> &cp, uint32_t subdivisio
 
 std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> camera)
 {
+// #if 0  — desert scene restored
     // ==========================================================
     // Moonlit Desert Ruins
     // Camera: (0, 3, -15), looking toward (0, 1.5, 5)  [Y-up]
@@ -369,9 +393,9 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     near_rocks->set(cg::Point3(-9.0f, -2.0f, -6.0f), cg::Point3(7.0f, 2.0f, 5.0f));
     rock_mat->add_child(near_rocks);
 
-    near_rocks->add_child(make_rock_lod("rock1.obj", 4.0f, -3.5f, -3.0f, 0.4f, 30.0f, 0.9f));
-    near_rocks->add_child(make_rock_lod("rock2.obj", 3.0f,  4.5f, -1.0f, 0.2f, 30.0f, 0.7f));
-    near_rocks->add_child(make_rock_lod("rock3.obj", 2.5f, -6.0f,  2.5f, 0.1f, 30.0f, 0.6f));
+    near_rocks->add_child(make_rock_lod("model/rock1.obj", 4.0f, -3.5f, -3.0f, 0.4f, 30.0f, 0.9f));
+    near_rocks->add_child(make_rock_lod("model/rock2.obj", 3.0f,  4.5f, -1.0f, 0.2f, 30.0f, 0.7f));
+    near_rocks->add_child(make_rock_lod("model/rock3.obj", 2.5f, -6.0f,  2.5f, 0.1f, 30.0f, 0.6f));
 
     // ---------- MID ROCKS (AABBNode: rocks 4-6, z:5..14) ----------
     auto mid_rocks = std::make_shared<cg::AABBNode>();
@@ -379,9 +403,9 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     mid_rocks->set(cg::Point3(-7.0f, -2.0f, 4.0f), cg::Point3(9.0f, 2.0f, 15.0f));
     rock_mat->add_child(mid_rocks);
 
-    mid_rocks->add_child(make_rock_lod("rock4.obj", 3.5f,  5.5f,  7.0f, 0.3f, 32.0f, 0.8f));
-    mid_rocks->add_child(make_rock_lod("rock5.obj", 2.8f, -3.5f, 10.0f, 0.2f, 32.0f, 0.65f));
-    mid_rocks->add_child(make_rock_lod("rock6.obj", 4.0f,  2.0f, 13.0f, 0.4f, 32.0f, 0.95f));
+    mid_rocks->add_child(make_rock_lod("model/rock4.obj", 3.5f,  5.5f,  7.0f, 0.3f, 32.0f, 0.8f));
+    mid_rocks->add_child(make_rock_lod("model/rock5.obj", 2.8f, -3.5f, 10.0f, 0.2f, 32.0f, 0.65f));
+    mid_rocks->add_child(make_rock_lod("model/rock6.obj", 4.0f,  2.0f, 13.0f, 0.4f, 32.0f, 0.95f));
 
     // ---------- FAR ROCKS (AABBNode: rocks 7-9, z:20..33 — spheres only) ----------
     // Always low detail; demonstrates AABB culling at large angles without LOD overhead
@@ -409,6 +433,8 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     g_lights.push_back(moon.get());
 
     return scene_node;
+// #endif  — desert scene end
+
 }
 
 // Returns perceived luminance of a color

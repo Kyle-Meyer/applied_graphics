@@ -6,17 +6,29 @@
 namespace cg
 {
 
+// Thread-local hit cache: each render thread stores its own last-hit info.
+// Tagged with a mesh pointer so get_normal/get_texture_coord/get_tangent can
+// assert they're reading data from the right mesh.
+namespace {
+struct HitCache {
+    const RTMeshNode *mesh    = nullptr;
+    uint32_t          face    = 0;
+    float             bary_u  = 0.0f;
+    float             bary_v  = 0.0f;
+};
+thread_local HitCache tl_hit;
+}
+
 RTMeshNode::RTMeshNode(const std::vector<VertexAndNormal> &vertices,
                        const std::vector<uint16_t> &faces)
-    : vertices_(vertices), faces_(faces), last_face_index_(0),
-      last_bary_u_(0), last_bary_v_(0)
+    : vertices_(vertices), faces_(faces)
 {
     build_aabb();
 }
 
 RTMeshNode::RTMeshNode(const std::vector<Point3> &vertices,
                        const std::vector<uint16_t> &faces)
-    : faces_(faces), last_face_index_(0), last_bary_u_(0), last_bary_v_(0)
+    : faces_(faces)
 {
     // Convert Point3 to VertexAndNormal
     vertices_.resize(vertices.size());
@@ -88,56 +100,58 @@ void RTMeshNode::build_aabb()
 
 Vector3 RTMeshNode::get_normal(const Point3 &int_pt)
 {
-    // Interpolate vertex normals using barycentric coordinates
-    uint16_t i0 = faces_[last_face_index_ * 3];
-    uint16_t i1 = faces_[last_face_index_ * 3 + 1];
-    uint16_t i2 = faces_[last_face_index_ * 3 + 2];
+    // Use this thread's cached hit (set by find_closest_intersect on the same thread).
+    uint32_t face = (tl_hit.mesh == this) ? tl_hit.face : 0;
+    float    bu   = (tl_hit.mesh == this) ? tl_hit.bary_u : 0.0f;
+    float    bv   = (tl_hit.mesh == this) ? tl_hit.bary_v : 0.0f;
 
-    float w0 = 1.0f - last_bary_u_ - last_bary_v_;
-    float w1 = last_bary_u_;
-    float w2 = last_bary_v_;
+    uint16_t i0 = faces_[face * 3];
+    uint16_t i1 = faces_[face * 3 + 1];
+    uint16_t i2 = faces_[face * 3 + 2];
 
+    float w0 = 1.0f - bu - bv;
     Vector3 n = vertices_[i0].normal * w0 +
-                vertices_[i1].normal * w1 +
-                vertices_[i2].normal * w2;
+                vertices_[i1].normal * bu +
+                vertices_[i2].normal * bv;
     n.normalize();
     return n;
 }
 
 Point2 RTMeshNode::get_texture_coord(const Point3 &int_pt)
 {
+    uint32_t face = (tl_hit.mesh == this) ? tl_hit.face : 0;
+    float    bu   = (tl_hit.mesh == this) ? tl_hit.bary_u : 0.0f;
+    float    bv   = (tl_hit.mesh == this) ? tl_hit.bary_v : 0.0f;
+
     if (!tex_coords_.empty())
     {
-        uint16_t i0 = faces_[last_face_index_ * 3];
-        uint16_t i1 = faces_[last_face_index_ * 3 + 1];
-        uint16_t i2 = faces_[last_face_index_ * 3 + 2];
+        uint16_t i0 = faces_[face * 3];
+        uint16_t i1 = faces_[face * 3 + 1];
+        uint16_t i2 = faces_[face * 3 + 2];
 
-        float w0 = 1.0f - last_bary_u_ - last_bary_v_;
-        float w1 = last_bary_u_;
-        float w2 = last_bary_v_;
-
+        float w0 = 1.0f - bu - bv;
         return Point2(
-            tex_coords_[i0].x * w0 + tex_coords_[i1].x * w1 + tex_coords_[i2].x * w2,
-            tex_coords_[i0].y * w0 + tex_coords_[i1].y * w1 + tex_coords_[i2].y * w2);
+            tex_coords_[i0].x * w0 + tex_coords_[i1].x * bu + tex_coords_[i2].x * bv,
+            tex_coords_[i0].y * w0 + tex_coords_[i1].y * bu + tex_coords_[i2].y * bv);
     }
 
-    // Fallback: map barycentric u,v directly to s,t
-    return Point2(last_bary_u_, last_bary_v_);
+    return Point2(bu, bv);
 }
 
 Vector3 RTMeshNode::get_tangent(const Point3 &int_pt)
 {
+    uint32_t face = (tl_hit.mesh == this) ? tl_hit.face : 0;
+    float    bu   = (tl_hit.mesh == this) ? tl_hit.bary_u : 0.0f;
+    float    bv   = (tl_hit.mesh == this) ? tl_hit.bary_v : 0.0f;
+
     if (!tangents_.empty())
     {
-        uint16_t i0 = faces_[last_face_index_ * 3];
-        uint16_t i1 = faces_[last_face_index_ * 3 + 1];
-        uint16_t i2 = faces_[last_face_index_ * 3 + 2];
+        uint16_t i0 = faces_[face * 3];
+        uint16_t i1 = faces_[face * 3 + 1];
+        uint16_t i2 = faces_[face * 3 + 2];
 
-        float w0 = 1.0f - last_bary_u_ - last_bary_v_;
-        float w1 = last_bary_u_;
-        float w2 = last_bary_v_;
-
-        Vector3 t = tangents_[i0] * w0 + tangents_[i1] * w1 + tangents_[i2] * w2;
+        float w0 = 1.0f - bu - bv;
+        Vector3 t = tangents_[i0] * w0 + tangents_[i1] * bu + tangents_[i2] * bv;
         t.normalize();
         return t;
     }
@@ -182,10 +196,11 @@ void RTMeshNode::find_closest_intersect(Ray3 ray, SceneState &current_state, Sce
             closest.texture_node = current_state.texture_node;
             closest.normal_map_node = current_state.normal_map_node;
 
-            // Store barycentric coords for normal/texcoord interpolation
-            last_face_index_ = i / 3;
-            last_bary_u_ = result.barycentric_u;
-            last_bary_v_ = result.barycentric_v;
+            // Store barycentric coords in the per-thread cache (thread-safe).
+            tl_hit.mesh   = this;
+            tl_hit.face   = i / 3;
+            tl_hit.bary_u = result.barycentric_u;
+            tl_hit.bary_v = result.barycentric_v;
 
             if (current_state.transform_required)
             {
