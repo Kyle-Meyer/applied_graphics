@@ -36,7 +36,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <functional>
 #include <iostream>
+#include <mutex>
+#include <queue>
 #include <thread>
 #include <vector>
 
@@ -76,7 +80,13 @@ static std::atomic<int64_t> g_aa_samples{0};
 static std::atomic<int64_t> g_aa_pixels{0};
 
 // Soft shadow toggle (area light disc sampling vs. hard binary shadows)
-bool g_soft_shadows = false;  // off for bunny test — enable with 's' key
+bool g_soft_shadows = true;
+
+// Normal map toggle — 'm' key
+bool g_normal_map_enabled = true;
+
+// Sparkle toggle — 'k' key
+bool g_sparkle_enabled = true;
 
 // Ray Tracer
 cg::RayTracer *g_ray_tracer = 0;
@@ -363,7 +373,7 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
 
         const float cy = -1.0f - burial + sphere_radius * 0.5f;
 
-        // HIGH level (dist < 15): detailed OBJ mesh
+        // HIGH level (dist < 40): detailed OBJ mesh
         auto mesh = load_obj_mesh(obj);
         if (mesh)
         {
@@ -371,7 +381,7 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
             xform->translate(tx, -1.0f - burial, tz);
             xform->scale(scale, scale, scale);
             xform->add_child(mesh);
-            lod->add_level(15.0f, xform);
+            lod->add_level(40.0f, xform);
         }
 
         // MED level (dist < lod_threshold): sphere stand-in
@@ -550,6 +560,88 @@ void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Persistent thread pool
+//
+// Workers are created once and block on a condition variable between passes.
+// The main thread submits row-range tasks, then calls wait() to block until
+// all tasks finish before rendering the framebuffer and moving to the next pass.
+// This eliminates the per-pass thread create/join overhead of the old design.
+// ─────────────────────────────────────────────────────────────────────────────
+class ThreadPool
+{
+public:
+    explicit ThreadPool(int n)
+    {
+        workers_.reserve(n);
+        for (int i = 0; i < n; ++i)
+            workers_.emplace_back([this]{ worker_loop(); });
+    }
+
+    ~ThreadPool()
+    {
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            stop_ = true;
+        }
+        cv_work_.notify_all();
+        for (auto &w : workers_) w.join();
+    }
+
+    // Submit one task.  May be called from any thread.
+    void submit(std::function<void()> task)
+    {
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            queue_.push(std::move(task));
+            ++pending_;
+        }
+        cv_work_.notify_one();
+    }
+
+    // Block until every task submitted since the last wait() has finished.
+    void wait()
+    {
+        std::unique_lock<std::mutex> lk(mutex_);
+        cv_done_.wait(lk, [this]{ return pending_ == 0; });
+    }
+
+    int size() const { return static_cast<int>(workers_.size()); }
+
+private:
+    void worker_loop()
+    {
+        while (true)
+        {
+            std::function<void()> task;
+            {
+                std::unique_lock<std::mutex> lk(mutex_);
+                cv_work_.wait(lk, [this]{ return !queue_.empty() || stop_; });
+                if (stop_ && queue_.empty()) return;
+                task = std::move(queue_.front());
+                queue_.pop();
+            }
+            task();
+            {
+                std::lock_guard<std::mutex> lk(mutex_);
+                if (--pending_ == 0)
+                    cv_done_.notify_all();
+            }
+        }
+    }
+
+    std::vector<std::thread>          workers_;
+    std::queue<std::function<void()>> queue_;
+    std::mutex                        mutex_;
+    std::condition_variable           cv_work_;  // workers wait here for tasks
+    std::condition_variable           cv_done_;  // main thread waits here for pass end
+    int                               pending_ = 0;
+    bool                              stop_    = false;
+};
+
+// Initialised once on the first render, lives until process exit.
+static std::unique_ptr<ThreadPool> g_thread_pool;
+
 #ifdef MULTITHREAD
 
 /**
@@ -557,8 +649,14 @@ void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
  */
 void display()
 {
-    int32_t num_threads = std::thread::hardware_concurrency() - 1;
-    num_threads = num_threads > 0 ? num_threads : 1;
+    // Initialise the pool once — reused across all subsequent renders.
+    if (!g_thread_pool)
+    {
+        int32_t n = static_cast<int32_t>(std::thread::hardware_concurrency()) - 1;
+        if (n < 1) n = 1;
+        g_thread_pool = std::make_unique<ThreadPool>(n);
+    }
+    const int32_t num_threads = g_thread_pool->size();
 
     // Reset culling/LOD print throttles so each render shows fresh output
     cg::AABBNode::reset_rt_print_count();
@@ -573,20 +671,19 @@ void display()
 
     for(int32_t block_size = cg::FB_BLOCK_SIZE; block_size > 0; block_size /= 2)
     {
-        std::thread *threads = new std::thread[num_threads];
-        int32_t      num_rows = g_image_height / block_size;
-        int32_t      start_row = 0;
+        int32_t num_rows  = g_image_height / block_size;
+        int32_t start_row = 0;
 
+        // Distribute row ranges across the pool — no thread creation here.
         for(int32_t t_i = 0; t_i < num_threads; ++t_i)
         {
             int32_t end_row = std::min((t_i + 1) * num_rows / num_threads, num_rows - 1);
-            threads[t_i] = std::thread(render_rows, start_row, end_row, block_size);
+            g_thread_pool->submit([=]{ render_rows(start_row, end_row, block_size); });
             start_row = end_row + 1;
         }
 
-        // Wait for threads to complete
-        for(int32_t t_i = 0; t_i < num_threads; ++t_i) { threads[t_i].join(); }
-
+        // Block until all tasks for this pass are done, then display.
+        g_thread_pool->wait();
         g_frame_buffer->render();
         SDL_GL_SwapWindow(g_sdl_window);
     }
@@ -724,6 +821,20 @@ cg::EventType handle_key_event(const SDL_Event &event)
             result = cg::EventType::REDRAW;
             break;
 
+        // Toggle normal mapping (sand ripples + stone granite detail)
+        case SDLK_M:
+            g_normal_map_enabled = !g_normal_map_enabled;
+            std::cout << "Normal map: " << (g_normal_map_enabled ? "ON" : "OFF") << "\n";
+            result = cg::EventType::REDRAW;
+            break;
+
+        // Toggle sparkle (moonlit quartz glinting on sand)
+        case SDLK_K:
+            g_sparkle_enabled = !g_sparkle_enabled;
+            std::cout << "Sparkle: " << (g_sparkle_enabled ? "ON" : "OFF") << "\n";
+            result = cg::EventType::REDRAW;
+            break;
+
         // Camera presets: 1=wide, 2=ground level, 3=close rock
         case SDLK_1: case SDLK_2: case SDLK_3:
         {
@@ -790,6 +901,8 @@ int main(int argc, char **argv)
     std::cout << "h,H - Heading camera\n";
     std::cout << "a   - Toggle anti-aliasing\n";
     std::cout << "s   - Toggle soft/hard shadows\n";
+    std::cout << "m   - Toggle normal mapping (sand ripples + stone detail)\n";
+    std::cout << "k   - Toggle sparkle (moonlit quartz glinting)\n";
     std::cout << "1   - Wide shot (obelisk + shadow sweep)\n";
     std::cout << "2   - Ground level (sand sparkle + shadow drama)\n";
     std::cout << "3   - Close rock (foreground detail)\n";

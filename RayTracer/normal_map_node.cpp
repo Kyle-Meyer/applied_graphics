@@ -2,6 +2,9 @@
 
 #include "scene/image_data.hpp"
 
+// Declared in main.cpp — toggled by 'm' key
+extern bool g_normal_map_enabled;
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -52,13 +55,17 @@ void NormalMapNode::find_closest_intersect(Ray3 ray,
                                            SceneState &current_state,
                                            SceneState &closest)
 {
-    current_state.push_normal_map();
-    current_state.normal_map_node = this;
+    if (g_normal_map_enabled)
+    {
+        current_state.push_normal_map();
+        current_state.normal_map_node = this;
+    }
 
     for (auto c : children_)
         c->find_closest_intersect(ray, current_state, closest);
 
-    current_state.pop_normal_map();
+    if (g_normal_map_enabled)
+        current_state.pop_normal_map();
 }
 
 void NormalMapNode::fetch_texel(int32_t row, int32_t col,

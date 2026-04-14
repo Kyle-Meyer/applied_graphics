@@ -109,15 +109,43 @@ class RTMeshNode : public GeometryNode
     // Per-thread hit cache — see rt_mesh_node.cpp tl_hit_cache for storage.
     // (Removed mutable instance members to fix multi-thread race condition)
 
+    // ---- BVH ----
+    // Flat binary BVH over the mesh triangles.
+    // Internal nodes: tri_count == 0, left_child/right_child are indices into bvh_nodes_.
+    // Leaf nodes:     tri_count >  0, left_child is the start offset into bvh_tris_.
+    struct BVHNode {
+        AABB     bounds;
+        uint32_t left_child;   // internal: left child idx; leaf: first tri in bvh_tris_
+        uint32_t right_child;  // internal: right child idx; leaf: unused
+        uint32_t tri_count;    // 0 = internal, >0 = leaf
+    };
+    std::vector<BVHNode>   bvh_nodes_; // flat node array, root at index 0
+    std::vector<uint32_t>  bvh_tris_;  // triangle indices reordered for BVH leaves
+
     /**
      * Compute vertex normals from face normals (for simple constructor)
      */
     void compute_normals();
 
     /**
-     * Build the AABB from vertices
+     * Build the whole-mesh AABB from vertices
      */
     void build_aabb();
+
+    /**
+     * Build the BVH over all triangles. Called once after geometry is loaded.
+     */
+    void build_bvh();
+
+    /**
+     * Recursive BVH build helper.
+     * @param centroids  Per-triangle centroid array (indexed by triangle number)
+     * @param start      First index in bvh_tris_ for this subtree
+     * @param end        One-past-last index in bvh_tris_ for this subtree
+     * @return           Index of the newly created node in bvh_nodes_
+     */
+    uint32_t build_bvh_recursive(const std::vector<Point3> &centroids,
+                                  uint32_t start, uint32_t end);
 };
 
 } // namespace cg

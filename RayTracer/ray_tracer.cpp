@@ -8,6 +8,10 @@
 #include <iostream>
 #include <random>
 
+// Toggles declared in main.cpp
+extern bool g_normal_map_enabled;
+extern bool g_sparkle_enabled;
+
 namespace cg
 {
 
@@ -182,7 +186,7 @@ Color3 RayTracer::trace_ray(Ray &ray)
     // Each "sparkle grain" is a micro-facet with a randomly tilted normal.  It only
     // glints when the half-vector between the light and the camera aligns with that
     // tilted normal — making the effect view-dependent (camera-position-sensitive).
-    if (material->has_sparkle() && avg_shadow > 0.0f && !lights_.empty())
+    if (g_sparkle_enabled && material->has_sparkle() && avg_shadow > 0.0f && !lights_.empty())
     {
         Point2 uv   = nearest_object->get_texture_coord(int_pt);
         float  freq = material->sparkle_frequency();
