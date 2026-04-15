@@ -139,87 +139,62 @@ RayObjectIntersectResult Ray3::intersect(const BoundingSphere &sphere) const
 
 RayObjectIntersectResult Ray3::intersect(const AABB &box) const
 {
- // Slab method for ray-AABB intersection
-    Point3 box_min = box.min_pt();
-    Point3 box_max = box.max_pt();
-    
+    // Unrolled slab method — avoids the 3-iteration loop with its axis-selection
+    // branches (9 branch comparisons → 3 direct slab computations).
+    // t_min starts at 0 so it is clamped to [0, ∞); when the ray origin is inside
+    // the box all slab entry values are ≤ 0 and t_min stays 0, causing the inside
+    // branch below to fire and return t_max (the exit distance).
+    const Point3 bmin = box.min_pt();
+    const Point3 bmax = box.max_pt();
+
     float t_min = 0.0f;
     float t_max = std::numeric_limits<float>::max();
-    
-    // Check each axis (x, y, z)
-    for (int i = 0; i < 3; i++)
-    {
-        float ray_origin, ray_dir, box_min_i, box_max_i;
-        
-        if (i == 0) // X axis
-        {
-            ray_origin = o.x;
-            ray_dir = d.x;
-            box_min_i = box_min.x;
-            box_max_i = box_max.x;
-        }
-        else if (i == 1) // Y axis
-        {
-            ray_origin = o.y;
-            ray_dir = d.y;
-            box_min_i = box_min.y;
-            box_max_i = box_max.y;
-        }
-        else // Z axis
-        {
-            ray_origin = o.z;
-            ray_dir = d.z;
-            box_min_i = box_min.z;
-            box_max_i = box_max.z;
-        }
-        
-        if (std::abs(ray_dir) < EPSILON)
-        {
-            // Ray is parallel to slab
-            // No intersection if origin is not within slab
-            if (ray_origin < box_min_i || ray_origin > box_max_i)
-            {
-                return {false, 0.0f};
-            }
-        }
-        else
-        {
-            // Compute intersection t values of ray with near and far plane of slab
-            float inv_d = 1.0f / ray_dir;
-            float t1 = (box_min_i - ray_origin) * inv_d;
-            float t2 = (box_max_i - ray_origin) * inv_d;
-            
-            // Make t1 the intersection with near plane, t2 with far plane
-            if (t1 > t2)
-            {
-                std::swap(t1, t2);
-            }
-            
-            // Compute intersection of slab intersection intervals
-            t_min = std::max(t_min, t1);
-            t_max = std::min(t_max, t2);
-            
-            // Exit with no intersection as soon as slab intersection becomes empty
-            if (t_min > t_max)
-            {
-                return {false, 0.0f};
-            }
-        }
+
+    // X slab
+    if (std::abs(d.x) < EPSILON) {
+        if (o.x < bmin.x || o.x > bmax.x) return {false, 0.0f};
+    } else {
+        float inv = 1.0f / d.x;
+        float t1 = (bmin.x - o.x) * inv;
+        float t2 = (bmax.x - o.x) * inv;
+        if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+        t_min = std::max(t_min, t1);
+        t_max = std::min(t_max, t2);
+        if (t_min > t_max) return {false, 0.0f};
     }
-    
-    // Ray intersects all 3 slabs
-    // Return the nearest intersection (t_min)
-    // But only if it's in front of the ray
-    if (t_min < 0.0f)
-    {
-        // Ray origin is inside box, return t_max if positive
-        if (t_max >= 0.0f)
-        {
-            return {true, t_max};
-        }
-        return {false, 0.0f};
+
+    // Y slab
+    if (std::abs(d.y) < EPSILON) {
+        if (o.y < bmin.y || o.y > bmax.y) return {false, 0.0f};
+    } else {
+        float inv = 1.0f / d.y;
+        float t1 = (bmin.y - o.y) * inv;
+        float t2 = (bmax.y - o.y) * inv;
+        if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+        t_min = std::max(t_min, t1);
+        t_max = std::min(t_max, t2);
+        if (t_min > t_max) return {false, 0.0f};
     }
-    
+
+    // Z slab
+    if (std::abs(d.z) < EPSILON) {
+        if (o.z < bmin.z || o.z > bmax.z) return {false, 0.0f};
+    } else {
+        float inv = 1.0f / d.z;
+        float t1 = (bmin.z - o.z) * inv;
+        float t2 = (bmax.z - o.z) * inv;
+        if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+        t_min = std::max(t_min, t1);
+        t_max = std::min(t_max, t2);
+        if (t_min > t_max) return {false, 0.0f};
+    }
+
+    // t_min == 0 means origin is inside the box (all entry slabs were ≤ 0);
+    // return t_max (exit distance) in that case.
+    if (t_min == 0.0f)
+        return (t_max >= 0.0f) ? RayObjectIntersectResult{true, t_max}
+                               : RayObjectIntersectResult{false, 0.0f};
+
     return {true, t_min};
 }
 

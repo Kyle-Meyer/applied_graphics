@@ -453,50 +453,64 @@ static float luminance(const cg::Color3 &c)
     return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
 }
 
+// Convenience: trace one ray and accumulate the sample counter.
+static inline cg::Color3 trace_one(float px, float py)
+{
+    cg::Ray3 r = g_camera->construct_ray(px, py);
+    g_aa_samples += 1;
+    return g_ray_tracer->trace_ray(r, g_max_depth, DEPTH_THRESHOLD);
+}
+
 // Recursive adaptive sampling for one pixel sub-region.
 // (x, y)   — pixel-space top-left of the sub-region
 // size      — width/height of the sub-region in pixel units (1.0 = full pixel)
 // depth     — current recursion depth (0 = first call per pixel)
 // max_depth — stop subdividing at this depth (2 → up to 4^2 = 16 leaf samples)
 // threshold — luminance contrast threshold above which we subdivide (~0.1)
+// c00..c11  — pre-computed corner colors (passed from parent to avoid re-tracing)
+//             c00=(x,y)  c10=(x+size,y)  c01=(x,y+size)  c11=(x+size,y+size)
+//
+// Corner reuse analysis (max_depth=2, fully subdivided):
+//   old: 4 + 4×4 + 16×4 = 84 rays/pixel
+//   new: 4 + 5  + 4×5   = 29 rays/pixel  (−65%)
 static cg::Color3 adaptive_sample(float x, float y, float size,
-                                  int depth, int max_depth, float threshold)
+                                  int depth, int max_depth, float threshold,
+                                  cg::Color3 c00, cg::Color3 c10,
+                                  cg::Color3 c01, cg::Color3 c11)
 {
-    // Sample four corners of this sub-region
-    cg::Color3 c[4];
-    cg::Ray3 r0 = g_camera->construct_ray(x,        y       );
-    cg::Ray3 r1 = g_camera->construct_ray(x + size, y       );
-    cg::Ray3 r2 = g_camera->construct_ray(x,        y + size);
-    cg::Ray3 r3 = g_camera->construct_ray(x + size, y + size);
-    c[0] = g_ray_tracer->trace_ray(r0, g_max_depth, DEPTH_THRESHOLD);
-    c[1] = g_ray_tracer->trace_ray(r1, g_max_depth, DEPTH_THRESHOLD);
-    c[2] = g_ray_tracer->trace_ray(r2, g_max_depth, DEPTH_THRESHOLD);
-    c[3] = g_ray_tracer->trace_ray(r3, g_max_depth, DEPTH_THRESHOLD);
-
-    g_aa_samples += 4;
-
-    // Check contrast — if flat or at max depth, return average of corners
-    float lmin = luminance(c[0]), lmax = lmin;
-    for (int i = 1; i < 4; ++i)
-    {
-        float l = luminance(c[i]);
+    // Contrast check on the four pre-computed corners — no new rays needed here.
+    float lmin = luminance(c00), lmax = lmin;
+    auto consider = [&](const cg::Color3 &c) {
+        float l = luminance(c);
         if (l < lmin) lmin = l;
         if (l > lmax) lmax = l;
-    }
+    };
+    consider(c10); consider(c01); consider(c11);
 
     if (depth >= max_depth || (lmax - lmin) < threshold)
     {
-        return cg::Color3((c[0].r + c[1].r + c[2].r + c[3].r) * 0.25f,
-                          (c[0].g + c[1].g + c[2].g + c[3].g) * 0.25f,
-                          (c[0].b + c[1].b + c[2].b + c[3].b) * 0.25f);
+        return cg::Color3((c00.r + c10.r + c01.r + c11.r) * 0.25f,
+                          (c00.g + c10.g + c01.g + c11.g) * 0.25f,
+                          (c00.b + c10.b + c01.b + c11.b) * 0.25f);
     }
 
-    // High contrast — subdivide into 4 sub-regions and recurse
+    // High contrast — compute the 5 new interior samples and recurse into 4 quadrants.
+    // Each quadrant inherits 1 parent corner + shares the center with its siblings,
+    // so only 5 new rays are needed instead of 4×4 = 16 in the old approach.
     float half = size * 0.5f;
-    cg::Color3 q0 = adaptive_sample(x,        y,        half, depth + 1, max_depth, threshold);
-    cg::Color3 q1 = adaptive_sample(x + half, y,        half, depth + 1, max_depth, threshold);
-    cg::Color3 q2 = adaptive_sample(x,        y + half, half, depth + 1, max_depth, threshold);
-    cg::Color3 q3 = adaptive_sample(x + half, y + half, half, depth + 1, max_depth, threshold);
+    float xm = x + half, ym = y + half, xr = x + size, yb = y + size;
+
+    cg::Color3 cm0 = trace_one(xm, y );  // top edge midpoint
+    cg::Color3 cm1 = trace_one(x,  ym);  // left edge midpoint
+    cg::Color3 ccc = trace_one(xm, ym);  // centre
+    cg::Color3 cm2 = trace_one(xr, ym);  // right edge midpoint
+    cg::Color3 cm3 = trace_one(xm, yb);  // bottom edge midpoint
+
+    // Quadrant corners:  TL=(x,y)  TR=(x+size,y)  BL=(x,y+size)  BR=(x+size,y+size)
+    cg::Color3 q0 = adaptive_sample(x,  y,  half, depth+1, max_depth, threshold, c00, cm0, cm1, ccc);
+    cg::Color3 q1 = adaptive_sample(xm, y,  half, depth+1, max_depth, threshold, cm0, c10, ccc, cm2);
+    cg::Color3 q2 = adaptive_sample(x,  ym, half, depth+1, max_depth, threshold, cm1, ccc, c01, cm3);
+    cg::Color3 q3 = adaptive_sample(xm, ym, half, depth+1, max_depth, threshold, ccc, cm2, cm3, c11);
 
     return cg::Color3((q0.r + q1.r + q2.r + q3.r) * 0.25f,
                       (q0.g + q1.g + q2.g + q3.g) * 0.25f,
@@ -528,8 +542,15 @@ void render_rows(int32_t start_row, int32_t end_row, int32_t block_size)
 
                 if(adaptive)
                 {
-                    // Adaptive super-sampling: subdivide only high-contrast regions
-                    cg::Color3 color = adaptive_sample(fx, fy, 1.0f, 0, 2, 0.1f);
+                    // Adaptive super-sampling: trace 4 pixel corners once, then
+                    // subdivide only high-contrast regions (corners are passed down
+                    // so children never retrace them).
+                    cg::Color3 c00 = trace_one(fx,        fy       );
+                    cg::Color3 c10 = trace_one(fx + 1.0f, fy       );
+                    cg::Color3 c01 = trace_one(fx,        fy + 1.0f);
+                    cg::Color3 c11 = trace_one(fx + 1.0f, fy + 1.0f);
+                    cg::Color3 color = adaptive_sample(fx, fy, 1.0f, 0, 2, 0.1f,
+                                                       c00, c10, c01, c11);
                     g_frame_buffer->set(x, y, color, block_size);
                     ++g_aa_pixels;
                 }

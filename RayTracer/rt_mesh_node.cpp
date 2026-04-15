@@ -26,6 +26,55 @@ static constexpr uint32_t BVH_LEAF_SIZE = 4;
 // Max BVH traversal stack depth. log2(65536/4) + a few levels of margin = 16+8 = 24;
 // 64 is very conservative and safe for any realistic mesh.
 static constexpr int BVH_STACK_SIZE = 64;
+
+// Returns the geometric t_min of the ray/AABB intersection using −∞ as the
+// initial lower bound (unlike Ray3::intersect(AABB) which clamps to 0).
+// This means:
+//   negative  → ray origin is inside the box (can't prune based on entry distance)
+//   positive  → entry distance from outside; safe to prune if ≥ closest.t_min
+//   +∞        → no intersection
+inline float aabb_entry_t(const Ray3 &ray, const AABB &box)
+{
+    static const float INF = std::numeric_limits<float>::max();
+    const Point3 bmin = box.min_pt();
+    const Point3 bmax = box.max_pt();
+
+    float t_min = -INF;
+    float t_max =  INF;
+
+    // X slab
+    if (std::abs(ray.d.x) < 1e-8f) {
+        if (ray.o.x < bmin.x || ray.o.x > bmax.x) return INF;
+    } else {
+        float inv = 1.0f / ray.d.x;
+        float t1 = (bmin.x - ray.o.x) * inv, t2 = (bmax.x - ray.o.x) * inv;
+        if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+        t_min = std::max(t_min, t1); t_max = std::min(t_max, t2);
+        if (t_min > t_max) return INF;
+    }
+    // Y slab
+    if (std::abs(ray.d.y) < 1e-8f) {
+        if (ray.o.y < bmin.y || ray.o.y > bmax.y) return INF;
+    } else {
+        float inv = 1.0f / ray.d.y;
+        float t1 = (bmin.y - ray.o.y) * inv, t2 = (bmax.y - ray.o.y) * inv;
+        if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+        t_min = std::max(t_min, t1); t_max = std::min(t_max, t2);
+        if (t_min > t_max) return INF;
+    }
+    // Z slab
+    if (std::abs(ray.d.z) < 1e-8f) {
+        if (ray.o.z < bmin.z || ray.o.z > bmax.z) return INF;
+    } else {
+        float inv = 1.0f / ray.d.z;
+        float t1 = (bmin.z - ray.o.z) * inv, t2 = (bmax.z - ray.o.z) * inv;
+        if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+        t_min = std::max(t_min, t1); t_max = std::min(t_max, t2);
+        if (t_min > t_max) return INF;
+    }
+    if (t_max < 0.0f) return INF;  // box is entirely behind the ray origin
+    return t_min;   // negative → inside, positive → outside entry distance
+}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -286,17 +335,24 @@ void RTMeshNode::find_closest_intersect(Ray3 ray, SceneState &current_state, Sce
             const uint32_t lc = node.left_child;
             const uint32_t rc = node.right_child;
 
-            RayObjectIntersectResult rl = ray.intersect(bvh_nodes_[lc].bounds);
-            RayObjectIntersectResult rr = ray.intersect(bvh_nodes_[rc].bounds);
+            // aabb_entry_t returns:
+            //   +∞        → miss
+            //   negative  → ray origin is inside the box; must visit (can't prune)
+            //   positive  → entry distance from outside; prune if ≥ closest.t_min
+            float tl = aabb_entry_t(ray, bvh_nodes_[lc].bounds);
+            float tr = aabb_entry_t(ray, bvh_nodes_[rc].bounds);
 
-            // Gate only on `intersects`, not distance: ray.intersect(AABB) returns
-            // t_max when the origin is inside the AABB, which is not a valid entry-
-            // point lower bound and would prune nodes that contain closer triangles.
-            // We still use the distance to order pushes (nearer child popped first).
-            if (rl.intersects && rr.intersects)
+            const float INF = std::numeric_limits<float>::max();
+            // A child is worth visiting when it intersects AND its entry distance
+            // (if from outside) is still less than our current best hit.
+            bool hit_l = (tl < INF) && !(tl > 0.0f && tl >= closest.t_min);
+            bool hit_r = (tr < INF) && !(tr > 0.0f && tr >= closest.t_min);
+
+            if (hit_l && hit_r)
             {
-                // Push farther first so nearer is popped first (front-to-back)
-                if (rl.distance <= rr.distance)
+                // Push farther first so nearer is popped first (front-to-back).
+                // For inside-origins tl/tr may be negative; std::max(tl,0) as proxy.
+                if (tl <= tr)
                 {
                     stack[top++] = rc;
                     stack[top++] = lc;
@@ -307,8 +363,8 @@ void RTMeshNode::find_closest_intersect(Ray3 ray, SceneState &current_state, Sce
                     stack[top++] = rc;
                 }
             }
-            else if (rl.intersects) stack[top++] = lc;
-            else if (rr.intersects) stack[top++] = rc;
+            else if (hit_l) stack[top++] = lc;
+            else if (hit_r) stack[top++] = rc;
         }
     }
 }
