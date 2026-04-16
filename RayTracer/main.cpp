@@ -20,6 +20,7 @@
 #include "RayTracer/functional_texture.hpp"
 #include "RayTracer/lighting.hpp"
 #include "RayTracer/material_node.hpp"
+#include "RayTracer/height_field_floor_node.hpp"
 #include "RayTracer/normal_map_node.hpp"
 #include "RayTracer/sand_bump_node.hpp"
 #include "RayTracer/ray_tracer.hpp"
@@ -325,9 +326,11 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     floor_mat->set_shininess(12.0f);
     // Moonlit quartz sparkle: ~3% of grains glint blue-white
     floor_mat->enable_sparkle(0.97f, 80.0f, cg::Color3(0.3f, 0.6f, 1.0f), 3.0f);
-    auto floor_sphere = std::make_shared<cg::RTSphereNode>(
-        cg::Point3(0.0f, -1001.0f, 0.0f), 1000.0f);  // surface at y=-1
-    // Procedural sand bump shader: wind ripples + fine grain, no texture file needed.
+    // Height-field floor: ray-marches against the procedural dune surface so
+    // dune geometry (silhouettes, cast shadows, parallax) is real, not faked.
+    // height_scale=0.7 → dune crests reach ~1.0 wu above base_y=-1 (y≈0).
+    auto floor_sphere = std::make_shared<cg::HeightFieldFloorNode>(-1.0f, 0.7f);
+    // Micro-ripple bump shader layered on top of the geometric dune surface.
     auto floor_nm = std::make_shared<cg::SandBumpNode>();
     floor_nm->add_child(floor_sphere);
     floor_mat->add_child(floor_nm);

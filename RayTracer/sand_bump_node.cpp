@@ -3,7 +3,9 @@
 //	605.767 Applied Computer Graphics
 //
 //	File:    sand_bump_node.cpp
-//	Purpose: Procedural sand bump shader.
+//	Purpose: Procedural sand micro-ripple bump shader.
+//           Macro-scale dune geometry is handled by HeightFieldFloorNode;
+//           this shader adds fine-scale wind ripples and grain noise on top.
 //============================================================================
 
 #include "RayTracer/sand_bump_node.hpp"
@@ -16,7 +18,7 @@ namespace cg
 SandBumpNode::SandBumpNode(float ripple_freq, float ripple_amp,
                            float grain_freq,  float grain_amp,
                            float strength)
-    : NormalMapNode(strength),   // base: no texture file
+    : NormalMapNode(strength),
       ripple_freq_(ripple_freq),
       ripple_amp_(ripple_amp),
       grain_freq_(grain_freq),
