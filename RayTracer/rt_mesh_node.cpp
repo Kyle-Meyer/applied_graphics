@@ -33,7 +33,11 @@ static constexpr int BVH_STACK_SIZE = 64;
 //   negative  → ray origin is inside the box (can't prune based on entry distance)
 //   positive  → entry distance from outside; safe to prune if ≥ closest.t_min
 //   +∞        → no intersection
-inline float aabb_entry_t(const Ray3 &ray, const AABB &box)
+//
+// inv_dx/dy/dz are 1/ray.d.x/y/z precomputed once per traversal call.
+// The caller still passes the ray for the degenerate-axis origin-slab check.
+inline float aabb_entry_t(const Ray3 &ray, const AABB &box,
+                           float inv_dx, float inv_dy, float inv_dz)
 {
     static const float INF = std::numeric_limits<float>::max();
     const Point3 bmin = box.min_pt();
@@ -46,8 +50,7 @@ inline float aabb_entry_t(const Ray3 &ray, const AABB &box)
     if (std::abs(ray.d.x) < 1e-8f) {
         if (ray.o.x < bmin.x || ray.o.x > bmax.x) return INF;
     } else {
-        float inv = 1.0f / ray.d.x;
-        float t1 = (bmin.x - ray.o.x) * inv, t2 = (bmax.x - ray.o.x) * inv;
+        float t1 = (bmin.x - ray.o.x) * inv_dx, t2 = (bmax.x - ray.o.x) * inv_dx;
         if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
         t_min = std::max(t_min, t1); t_max = std::min(t_max, t2);
         if (t_min > t_max) return INF;
@@ -56,8 +59,7 @@ inline float aabb_entry_t(const Ray3 &ray, const AABB &box)
     if (std::abs(ray.d.y) < 1e-8f) {
         if (ray.o.y < bmin.y || ray.o.y > bmax.y) return INF;
     } else {
-        float inv = 1.0f / ray.d.y;
-        float t1 = (bmin.y - ray.o.y) * inv, t2 = (bmax.y - ray.o.y) * inv;
+        float t1 = (bmin.y - ray.o.y) * inv_dy, t2 = (bmax.y - ray.o.y) * inv_dy;
         if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
         t_min = std::max(t_min, t1); t_max = std::min(t_max, t2);
         if (t_min > t_max) return INF;
@@ -66,8 +68,7 @@ inline float aabb_entry_t(const Ray3 &ray, const AABB &box)
     if (std::abs(ray.d.z) < 1e-8f) {
         if (ray.o.z < bmin.z || ray.o.z > bmax.z) return INF;
     } else {
-        float inv = 1.0f / ray.d.z;
-        float t1 = (bmin.z - ray.o.z) * inv, t2 = (bmax.z - ray.o.z) * inv;
+        float t1 = (bmin.z - ray.o.z) * inv_dz, t2 = (bmax.z - ray.o.z) * inv_dz;
         if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
         t_min = std::max(t_min, t1); t_max = std::min(t_max, t2);
         if (t_min > t_max) return INF;
@@ -281,6 +282,13 @@ void RTMeshNode::find_closest_intersect(Ray3 ray, SceneState &current_state, Sce
     if (!aabb_result.intersects)
         return;
 
+    // Precompute direction reciprocals once — used in every internal BVH node
+    // test via aabb_entry_t.  The degenerate-axis guard (abs < 1e-8) is still
+    // inside aabb_entry_t; these values are only read in the non-degenerate branch.
+    const float inv_dx = 1.0f / ray.d.x;
+    const float inv_dy = 1.0f / ray.d.y;
+    const float inv_dz = 1.0f / ray.d.z;
+
     // Stack-based BVH traversal (avoids recursion overhead)
     uint32_t stack[BVH_STACK_SIZE];
     int top = 0;
@@ -339,8 +347,8 @@ void RTMeshNode::find_closest_intersect(Ray3 ray, SceneState &current_state, Sce
             //   +∞        → miss
             //   negative  → ray origin is inside the box; must visit (can't prune)
             //   positive  → entry distance from outside; prune if ≥ closest.t_min
-            float tl = aabb_entry_t(ray, bvh_nodes_[lc].bounds);
-            float tr = aabb_entry_t(ray, bvh_nodes_[rc].bounds);
+            float tl = aabb_entry_t(ray, bvh_nodes_[lc].bounds, inv_dx, inv_dy, inv_dz);
+            float tr = aabb_entry_t(ray, bvh_nodes_[rc].bounds, inv_dx, inv_dy, inv_dz);
 
             const float INF = std::numeric_limits<float>::max();
             // A child is worth visiting when it intersects AND its entry distance
@@ -384,6 +392,12 @@ bool RTMeshNode::does_intersect_exist(Ray3 ray, float d, SceneState &current_sta
     if (!aabb_result.intersects || aabb_result.distance > d)
         return false;
 
+    // Precompute direction reciprocals for aabb_entry_t (same as closest-hit path)
+    const float inv_dx = 1.0f / ray.d.x;
+    const float inv_dy = 1.0f / ray.d.y;
+    const float inv_dz = 1.0f / ray.d.z;
+    const float INF    = std::numeric_limits<float>::max();
+
     // Stack-based BVH traversal with early exit on first hit
     uint32_t stack[BVH_STACK_SIZE];
     int top = 0;
@@ -414,16 +428,19 @@ bool RTMeshNode::does_intersect_exist(Ray3 ray, float d, SceneState &current_sta
         else
         {
             // ── Internal: push children whose AABBs are within range ──────
+            // Use aabb_entry_t (same as closest-hit path) for consistent distance
+            // semantics: negative → origin inside box (must visit); positive → entry
+            // from outside (prune if ≥ d); +∞ → miss.
             const uint32_t lc = node.left_child;
             const uint32_t rc = node.right_child;
 
-            RayObjectIntersectResult rl = ray.intersect(bvh_nodes_[lc].bounds);
-            RayObjectIntersectResult rr = ray.intersect(bvh_nodes_[rc].bounds);
+            float tl = aabb_entry_t(ray, bvh_nodes_[lc].bounds, inv_dx, inv_dy, inv_dz);
+            float tr = aabb_entry_t(ray, bvh_nodes_[rc].bounds, inv_dx, inv_dy, inv_dz);
 
-            // Shadow rays originate above surfaces so the ray origin is always
-            // outside any occluder's AABB — distance is the valid entry bound here.
-            if (rl.intersects && rl.distance < d) stack[top++] = lc;
-            if (rr.intersects && rr.distance < d) stack[top++] = rc;
+            // Visit a child when it intersects (tl < INF) AND its outside-entry
+            // distance (if positive) is still within the light distance d.
+            if (tl < INF && !(tl > 0.0f && tl >= d)) stack[top++] = lc;
+            if (tr < INF && !(tr > 0.0f && tr >= d)) stack[top++] = rc;
         }
     }
 

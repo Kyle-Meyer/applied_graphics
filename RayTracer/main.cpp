@@ -677,8 +677,6 @@ void display()
         if (n < 1) n = 1;
         g_thread_pool = std::make_unique<ThreadPool>(n);
     }
-    const int32_t num_threads = g_thread_pool->size();
-
     // Reset culling/LOD print throttles so each render shows fresh output
     cg::AABBNode::reset_rt_print_count();
     cg::LODNode::reset_rt_print_count();
@@ -692,15 +690,14 @@ void display()
 
     for(int32_t block_size = cg::FB_BLOCK_SIZE; block_size > 0; block_size /= 2)
     {
-        int32_t num_rows  = g_image_height / block_size;
-        int32_t start_row = 0;
+        const int32_t num_rows = g_image_height / block_size;
 
-        // Distribute row ranges across the pool — no thread creation here.
-        for(int32_t t_i = 0; t_i < num_threads; ++t_i)
+        // Submit one task per logical row so the pool self-balances: shadow-heavy
+        // rows (mid-scene rocks) and cheap rows (background sky) get interleaved
+        // across threads without any thread sitting idle while others finish late.
+        for(int32_t row = 0; row < num_rows; ++row)
         {
-            int32_t end_row = std::min((t_i + 1) * num_rows / num_threads, num_rows - 1);
-            g_thread_pool->submit([=]{ render_rows(start_row, end_row, block_size); });
-            start_row = end_row + 1;
+            g_thread_pool->submit([=]{ render_rows(row, row, block_size); });
         }
 
         // Block until all tasks for this pass are done, then display.
