@@ -26,7 +26,7 @@ SandBumpNode::SandBumpNode(float ripple_freq, float ripple_amp,
 {
 }
 
-Vector3 SandBumpNode::sample(const Point2 & /*uv*/, const Point3 &world_pos) const
+Vector3 SandBumpNode::sample(const Point2 & /*uv*/, const Point3 &world_pos, float cam_dist) const
 {
     const float PI2 = 2.0f * static_cast<float>(M_PI);
 
@@ -59,11 +59,20 @@ Vector3 SandBumpNode::sample(const Point2 & /*uv*/, const Point3 &world_pos) con
     float dwv_dv = 1.0f + wa * ws * (-1.1f*sinf(ws*(0.8f*u+1.1f*v))
                                     + 0.5f*1.7f*ws * (-sinf(ws*1.7f*(u+0.5f*v))) * 0.5f);
 
+    // ── Distance LOD ──────────────────────────────────────────────────────
+    // Grain fades out 5..25 units; ripples soften 25..65 units.
+    auto smoothstep = [](float edge0, float edge1, float x) {
+        float t = std::max(0.0f, std::min((x - edge0) / (edge1 - edge0), 1.0f));
+        return t * t * (3.0f - 2.0f * t);
+    };
+    float grain_scale  = 1.0f - smoothstep( 5.0f, 25.0f, cam_dist);
+    float ripple_scale = 1.0f - smoothstep(25.0f, 65.0f, cam_dist) * 0.85f;
+
     // ── Primary aeolian ripples (in warped space) ──────────────────────────
     // h = A * sin(2π * freq * wu)  →  slope in warped u/v, then chain-rule
     // back to world dx/dy.
     float f1 = ripple_freq_;
-    float a1 = ripple_amp_;
+    float a1 = ripple_amp_ * ripple_scale;
     float dh_dwu = -a1 * cosf(PI2 * f1 * wu) * (PI2 * f1);
     float dh_dwv = -a1 * 0.20f * cosf(PI2 * f1 * 0.30f * wv) * (PI2 * f1 * 0.30f);
     float dx = dh_dwu * dwu_du + dh_dwv * dwv_du;
@@ -92,8 +101,8 @@ Vector3 SandBumpNode::sample(const Point2 & /*uv*/, const Point3 &world_pos) con
     float sv = wv * grain_freq_;
     float hx = fract(fabsf(sinf(su * 12.9898f + sv * 78.233f)  * 43758.5453f));
     float hy = fract(fabsf(sinf(su *  4.1414f + sv *  2.7183f) * 31415.9265f));
-    dx += (hx * 2.0f - 1.0f) * grain_amp_;
-    dy += (hy * 2.0f - 1.0f) * grain_amp_;
+    dx += (hx * 2.0f - 1.0f) * grain_amp_ * grain_scale;
+    dy += (hy * 2.0f - 1.0f) * grain_amp_ * grain_scale;
 
     // ── Build and normalise the tangent-space normal ───────────────────────
     // A height-field with slopes (dx, dy) has the unnormalised normal (-dx, -dy, 1).

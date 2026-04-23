@@ -46,7 +46,7 @@ public:
      * Compute tangent-space normal from world-space position (ignores UV).
      * Using world XZ avoids the pole-compression artifact of spherical UV mapping.
      */
-    Vector3 sample(const Point2 &uv, const Point3 &world_pos) const override;
+    Vector3 sample(const Point2 &uv, const Point3 &world_pos, float cam_dist = 0.0f) const override;
 
 private:
     float ripple_freq_;

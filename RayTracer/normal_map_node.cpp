@@ -82,7 +82,7 @@ void NormalMapNode::fetch_texel(int32_t row, int32_t col,
     b = p[2] * INV255;
 }
 
-Vector3 NormalMapNode::sample(const Point2 &uv, const Point3 & /*world_pos*/) const
+Vector3 NormalMapNode::sample(const Point2 &uv, const Point3 & /*world_pos*/, float /*cam_dist*/) const
 {
     if (!pixel_map_)
         return Vector3(0.0f, 0.0f, 1.0f);  // Neutral: no perturbation

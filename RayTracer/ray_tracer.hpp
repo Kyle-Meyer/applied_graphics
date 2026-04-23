@@ -67,6 +67,7 @@ class RayTracer
 
   private:
     Lighting                   lighting_;
+    Point3                     view_position_;
     std::shared_ptr<SceneNode> scene_root_;
     std::vector<LightNode *>   lights_;
 

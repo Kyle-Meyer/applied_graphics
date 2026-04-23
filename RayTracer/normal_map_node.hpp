@@ -62,7 +62,7 @@ class NormalMapNode : public SceneNode
      *                   procedural shaders that prefer world-space coords)
      * @return Tangent-space normal vector (not necessarily unit length)
      */
-    virtual Vector3 sample(const Point2 &uv, const Point3 &world_pos) const;
+    virtual Vector3 sample(const Point2 &uv, const Point3 &world_pos, float cam_dist = 0.0f) const;
 
     float strength() const { return strength_; }
 

@@ -20,7 +20,7 @@ RayTracer::RayTracer(std::shared_ptr<SceneNode> scene_root)
     scene_root_ = scene_root;
 
     // Initialize lighting support. Set the global ambient here.
-    lighting_.set_ambient(Color3(0.25f, 0.25f, 0.25f));
+    lighting_.set_ambient(Color3(0.08f, 0.12f, 0.28f));
 
     // Soft shadow defaults: 8 samples, disc radius 2 world-units, enabled.
     soft_shadows_enabled_ = true;
@@ -39,6 +39,91 @@ Color3 RayTracer::trace_ray(Ray3 &initial_ray, int depth, float adaptive_thresho
 {
     Ray ray(initial_ray, depth, adaptive_threshold);
     return trace_ray(ray);
+}
+
+// Procedural night sky: gradient + stars + moon disc + atmospheric halo.
+// Called for every ray that misses all scene geometry (primary and reflected).
+static Color3 sky_color(const Vector3 &dir)
+{
+    static const float PI     = static_cast<float>(M_PI);
+    static const float TWO_PI = 2.0f * PI;
+
+    auto fract_f = [](float x) { return x - std::floor(x); };
+    auto hash2   = [&](float a, float b) -> float {
+        return fract_f(std::abs(std::sin(a * 127.1f + b * 311.7f) * 43758.5453f));
+    };
+
+    // Night sky gradient: horizon (y=0) → deep blue, zenith (y=1) → darker blue
+    float t  = std::max(0.0f, dir.y);
+    float t2 = t * t;
+    Color3 sky(0.004f + t2 * 0.006f,
+               0.008f + t2 * 0.012f,
+               0.025f + t2 * 0.045f);
+
+    // Stars: map direction to spherical grid, hash each cell for a star
+    float phi   = std::atan2(dir.z, dir.x);
+    float theta = std::acos(std::max(-1.0f, std::min(1.0f, dir.y)));
+
+    // 200×100 grid → ~15 700 upper-hemisphere cells; 1% density → ~157 stars
+    // Cell size ≈ 1.8° → star radius ≈ 0.063 cells ≈ 0.11° ≈ 2 pixels at 60°/1024px
+    const float PHI_SCALE   = 200.0f;
+    const float THETA_SCALE = 100.0f;
+    float sp = (phi / TWO_PI + 0.5f) * PHI_SCALE;
+    float st = (theta / PI)           * THETA_SCALE;
+    float cp = std::floor(sp), ct = std::floor(st);
+    float fp = sp - cp,        ft = st - ct;
+
+    float h1   = hash2(cp, ct);
+    float star = 0.0f;
+    if (h1 < 0.010f)
+    {
+        float h2 = hash2(cp + 13.7f, ct +  5.3f);
+        float h3 = hash2(cp +  7.1f, ct + 19.4f);
+        float cx = 0.15f + h2 * 0.70f;
+        float cy = 0.15f + h3 * 0.70f;
+        float dx = fp - cx, dy = ft - cy;
+        float dist2 = dx * dx + dy * dy;
+        float brightness = std::max(0.0f, 1.0f - dist2 / 0.004f);
+        brightness = brightness * brightness;
+        star = std::min(1.5f, (0.4f + h2 * 1.4f) * brightness);
+    }
+
+    // Moon disc: direction matches the scene light at (5, 3, 11)
+    static const Vector3 MOON_DIR = []() {
+        float mx = 5.0f, my = 3.0f, mz = 11.0f;
+        float len = std::sqrt(mx*mx + my*my + mz*mz);
+        return Vector3(mx/len, my/len, mz/len);
+    }();
+
+    float md = dir.dot(MOON_DIR);
+
+    // Disc half-angle ≈ 4.5° (cos 4.5° ≈ 0.9969); halo out to ≈ 12° (cos 12° ≈ 0.9781)
+    const float MOON_COS = 0.9969f;
+    const float HALO_COS = 0.9781f;
+
+    float moon_bright = 0.0f;
+    float halo_bright = 0.0f;
+    if (md > HALO_COS)
+    {
+        // Clamp halo_t to [0,1] so it doesn't blow up inside the disc
+        float halo_t = std::min(1.0f, (md - HALO_COS) / (MOON_COS - HALO_COS));
+        halo_bright  = halo_t * halo_t * 0.18f;
+
+        if (md > MOON_COS)
+        {
+            float moon_t = (md - MOON_COS) / (1.0f - MOON_COS);
+            float edge   = std::min(1.0f, moon_t * 8.0f); // soft disc edge over ~12% of radius
+            float limb   = 0.80f + 0.20f * moon_t;        // mild limb darkening
+            moon_bright  = edge * limb;
+        }
+    }
+
+    auto clamp01 = [](float v){ return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+    Color3 result;
+    result.r = clamp01(sky.r + star * 0.85f + moon_bright * 0.75f + halo_bright * 0.38f);
+    result.g = clamp01(sky.g + star * 0.90f + moon_bright * 0.78f + halo_bright * 0.50f);
+    result.b = clamp01(sky.b + star * 1.00f + moon_bright * 0.84f + halo_bright * 0.72f);
+    return result;
 }
 
 Color3 RayTracer::trace_ray(Ray &ray)
@@ -61,8 +146,8 @@ Color3 RayTracer::trace_ray(Ray &ray)
 
     scene_root_->find_closest_intersect(ray, current_state, closest);
 
-    // If no object hit, return background value
-    if(!closest.geometry_node) { return Color3(0.02f, 0.04f, 0.08f); }
+    // If no object hit, return procedural night sky
+    if(!closest.geometry_node) { return sky_color(ray.d); }
 
     // Get the nearest object and state
     MaterialNode *material = (MaterialNode *)closest.material_node;
@@ -110,7 +195,8 @@ Color3 RayTracer::trace_ray(Ray &ray)
         {
             T = T * (1.0f / tlen);
             Vector3 B  = normal.cross(T);   // bitangent
-            Vector3 tn = nm->sample(uv, int_pt);  // tangent-space normal from map
+            float cam_dist = Vector3(int_pt, view_position_).norm();
+            Vector3 tn = nm->sample(uv, int_pt, cam_dist);
 
             // Rotate tangent-space normal into world space via TBN
             normal = (T * tn.x + B * tn.y + normal * tn.z);
@@ -330,7 +416,11 @@ Color3 RayTracer::trace_ray(Ray &ray)
 }
 
 
-void RayTracer::set_view_position(const Point3 &pos) { lighting_.set_view_position(pos); }
+void RayTracer::set_view_position(const Point3 &pos)
+{
+    view_position_ = pos;
+    lighting_.set_view_position(pos);
+}
 
 void RayTracer::add_light(LightNode *light) { lights_.push_back(light); }
 

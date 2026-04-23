@@ -23,6 +23,7 @@
 #include "RayTracer/height_field_floor_node.hpp"
 #include "RayTracer/normal_map_node.hpp"
 #include "RayTracer/sand_bump_node.hpp"
+#include "RayTracer/desert_rock_texture.hpp"
 #include "RayTracer/ray_tracer.hpp"
 #include "RayTracer/rt_sphere_node.hpp"
 #include "RayTracer/rt_mesh_node.hpp"
@@ -324,6 +325,7 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     floor_mat->set_ambient_and_diffuse(cg::Color4(0.76f, 0.65f, 0.42f, 1.0f)); // sand
     floor_mat->set_specular(cg::Color4(0.25f, 0.22f, 0.15f, 1.0f));
     floor_mat->set_shininess(12.0f);
+    floor_mat->set_emission(cg::Color4(0.01f, 0.02f, 0.05f, 1.0f)); // very slight blue moonlit glow
     // Moonlit quartz sparkle: ~3% of grains glint blue-white
     floor_mat->enable_sparkle(0.97f, 80.0f, cg::Color3(0.3f, 0.6f, 1.0f), 3.0f);
     // Height-field floor: ray-marches against the procedural dune surface so
@@ -339,10 +341,23 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     // ---------- OBELISK ----------
     // Dark polished granite — high specular for "glistening" under moonlight.
     // Shaft base at y=-1 (sand surface), apex at y=7.5.
+    // Neutral white diffuse — obelisk_tex provides the albedo colour.
     auto obelisk_mat = std::make_shared<cg::MaterialNode>();
-    obelisk_mat->set_ambient_and_diffuse(cg::Color4(0.18f, 0.16f, 0.15f, 1.0f)); // dark grey granite
-    obelisk_mat->set_specular(cg::Color4(0.8f, 0.85f, 0.9f, 1.0f));              // blue-tinted sheen
+    obelisk_mat->set_ambient_and_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
+    obelisk_mat->set_specular(cg::Color4(0.8f, 0.85f, 0.9f, 1.0f));  // blue-tinted sheen
     obelisk_mat->set_shininess(180.0f);
+    obelisk_mat->set_emission(cg::Color4(0.04f, 0.05f, 0.08f, 1.0f)); // faint blue-white moonlit glow
+
+    // Dark polished granite — fine-grained fBm with near-black tones and subtle
+    // blue-grey veining to match the moonlit scene palette.
+    auto obelisk_tex = std::make_shared<cg::DesertRockTexture>();
+    obelisk_tex->scale          = 0.8f;   // finer grain than rocks
+    obelisk_tex->noise_scale    = 10.0f;
+    obelisk_tex->stripes_scale  = 8.0f;
+    obelisk_tex->texture_detail = 10.0f;
+    obelisk_tex->color1         = cg::Color3(0.22f, 0.24f, 0.30f);  // dark blue-grey vein
+    obelisk_tex->color2         = cg::Color3(0.05f, 0.06f, 0.08f);  // near-black granite
+    obelisk_tex->stripes_color  = cg::Color3(0.02f, 0.02f, 0.04f);  // darkest band
 
     auto obelisk_xform = std::make_shared<cg::RTTransformNode>();
     obelisk_xform->translate(0.0f, -1.0f, 2.0f); // base on sand, slightly in front
@@ -357,14 +372,17 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     obelisk_bv->set_name("Obelisk");
     obelisk_bv->set(cg::Point3(-0.65f, -1.1f, 1.55f), cg::Point3(0.65f, 7.6f, 2.45f));
     obelisk_bv->add_child(obelisk_xform);
-    obelisk_mat->add_child(obelisk_bv);
+    obelisk_tex->add_child(obelisk_bv);
+    obelisk_mat->add_child(obelisk_tex);
     scene_node->add_child(obelisk_mat);
 
     // ---------- ROCK MATERIAL (shared by all rock LOD levels) ----------
+    // Neutral white diffuse — DesertRockTexture provides the albedo colour.
     auto rock_mat = std::make_shared<cg::MaterialNode>();
-    rock_mat->set_ambient_and_diffuse(cg::Color4(0.45f, 0.40f, 0.35f, 1.0f)); // warm grey sandstone
+    rock_mat->set_ambient_and_diffuse(cg::Color4(1.0f, 1.0f, 1.0f, 1.0f));
     rock_mat->set_specular(cg::Color4(0.20f, 0.20f, 0.18f, 1.0f));
     rock_mat->set_shininess(24.0f);
+    rock_mat->set_emission(cg::Color4(0.015f, 0.018f, 0.03f, 1.0f)); // dimmer moonlit glow
 
     // Helper lambda: wrap a rock mesh in a transform (scale + translate) under rock_mat
     // burial > 0 sinks the rock below the sand surface for a "partially buried" look
@@ -400,11 +418,15 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
         return lod;
     };
 
+    // Procedural rock texture — wraps all AABB groups so every rock
+    // (near/mid/far, mesh and sphere LOD levels) uses the same albedo.
+    auto rock_tex = std::make_shared<cg::DesertRockTexture>();
+
     // ---------- NEAR ROCKS (AABBNode: rocks 1-3, z:-5..4) ----------
     auto near_rocks = std::make_shared<cg::AABBNode>();
     near_rocks->set_name("NearRocks");
     near_rocks->set(cg::Point3(-9.0f, -2.0f, -6.0f), cg::Point3(7.0f, 2.0f, 5.0f));
-    rock_mat->add_child(near_rocks);
+    rock_tex->add_child(near_rocks);
 
     near_rocks->add_child(make_rock_lod("model/rock1.obj", 4.0f, -3.5f, -3.0f, 0.4f, 30.0f, 0.9f));
     near_rocks->add_child(make_rock_lod("model/rock2.obj", 3.0f,  4.5f, -1.0f, 0.2f, 30.0f, 0.7f));
@@ -414,7 +436,7 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     auto mid_rocks = std::make_shared<cg::AABBNode>();
     mid_rocks->set_name("MidRocks");
     mid_rocks->set(cg::Point3(-7.0f, -2.0f, 4.0f), cg::Point3(9.0f, 2.0f, 15.0f));
-    rock_mat->add_child(mid_rocks);
+    rock_tex->add_child(mid_rocks);
 
     mid_rocks->add_child(make_rock_lod("model/rock4.obj", 3.5f,  5.5f,  7.0f, 0.3f, 32.0f, 0.8f));
     mid_rocks->add_child(make_rock_lod("model/rock5.obj", 2.8f, -3.5f, 10.0f, 0.2f, 32.0f, 0.65f));
@@ -425,22 +447,23 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     auto far_rocks = std::make_shared<cg::AABBNode>();
     far_rocks->set_name("FarRocks");
     far_rocks->set(cg::Point3(-10.0f, -2.0f, 19.0f), cg::Point3(8.0f, 2.0f, 34.0f));
-    rock_mat->add_child(far_rocks);
+    rock_tex->add_child(far_rocks);
 
     far_rocks->add_child(std::make_shared<cg::RTSphereNode>(cg::Point3(-7.0f, -0.8f, 22.0f), 1.2f));
     far_rocks->add_child(std::make_shared<cg::RTSphereNode>(cg::Point3( 4.5f, -0.9f, 27.0f), 0.9f));
     far_rocks->add_child(std::make_shared<cg::RTSphereNode>(cg::Point3(-1.5f, -1.0f, 32.0f), 1.5f));
 
+    rock_mat->add_child(rock_tex);
     scene_node->add_child(rock_mat);
 
     // ---------- MOON LIGHT ----------
     // Low-angle directional light from the upper-left — maximises shadow length.
     // Blue-white colour evokes cool moonlight. w=0 makes it directional.
     auto moon = std::make_shared<cg::LightNode>(0);
-    moon->set_position(cg::HPoint3(-8.0f, 12.0f, -6.0f, 0.0f)); // directional
-    moon->set_diffuse(cg::Color4(0.70f, 0.85f, 1.0f, 1.0f));    // pale blue-white
+    moon->set_position(cg::HPoint3(5.0f, 3.0f, 11.0f, 0.0f)); // directional — upper-left sky, verified in-frame all presets
+    moon->set_diffuse(cg::Color4(1.40f, 1.70f, 2.0f, 1.0f));    // boosted for broad fill
     moon->set_specular(cg::Color4(0.80f, 0.90f, 1.0f, 1.0f));
-    moon->set_ambient(cg::Color4(0.02f, 0.04f, 0.12f, 1.0f));   // faint night-sky fill
+    moon->set_ambient(cg::Color4(0.08f, 0.12f, 0.25f, 1.0f));   // lifted night-sky fill
     moon->enable();
     scene_node->add_child(moon);
     g_lights.push_back(moon.get());
