@@ -31,6 +31,7 @@ class LODNode : public SceneNode
     {
         float                      max_distance; // Use this level when distance <= max_distance
         std::shared_ptr<SceneNode> node;
+        std::string                note;         // Optional label printed when this level is selected
     };
 
     explicit LODNode(const std::string &name = "LODNode");
@@ -40,8 +41,9 @@ class LODNode : public SceneNode
      * @param max_distance  Distance threshold; this level is chosen when the
      *                      camera is closer than max_distance.
      * @param node          Geometry (or subtree) to draw at this level.
+     * @param note          Optional label printed when this level is selected.
      */
-    void add_level(float max_distance, std::shared_ptr<SceneNode> node);
+    void add_level(float max_distance, std::shared_ptr<SceneNode> node, const std::string &note = "");
 
     /**
      * Set the world-space reference position used for ray-tracing LOD distance.

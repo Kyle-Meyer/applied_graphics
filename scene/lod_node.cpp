@@ -18,9 +18,9 @@ LODNode::LODNode(const std::string &name)
     name_ = name;
 }
 
-void LODNode::add_level(float max_distance, std::shared_ptr<SceneNode> node)
+void LODNode::add_level(float max_distance, std::shared_ptr<SceneNode> node, const std::string &note)
 {
-    levels_.push_back({max_distance, node});
+    levels_.push_back({max_distance, node, note});
 }
 
 void LODNode::set_position(const Point3 &pos)
@@ -91,9 +91,11 @@ void LODNode::find_closest_intersect(Ray3 ray, SceneState &current_state, SceneS
     int n = s_rt_lod_prints.fetch_add(1, std::memory_order_relaxed);
     if (n < MAX_RT_LOD_PRINTS)
     {
+        const std::string &note = levels_[level].note;
         std::cout << "LOD RT: " << name_
                   << "  level=" << level
                   << "  dist=" << distance
+                  << (note.empty() ? "" : "  [" + note + "]")
                   << std::endl;
     }
     else if (n == MAX_RT_LOD_PRINTS)

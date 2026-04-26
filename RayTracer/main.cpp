@@ -71,7 +71,7 @@ std::shared_ptr<cg::CameraNode> g_camera;
 std::unique_ptr<cg::Framebuffer> g_frame_buffer;
 
 // Maximum depth to trace and adaptive threshold.
-int32_t     g_max_depth = 8;
+int32_t     g_max_depth = 3;
 const float DEPTH_THRESHOLD = 0.025f;
 
 // Anti-aliasing mode: 0=off, 1=uniform 2x2, 2=adaptive
@@ -89,6 +89,9 @@ bool g_normal_map_enabled = true;
 
 // Sparkle toggle — 'k' key
 bool g_sparkle_enabled = true;
+
+// Atmospheric glow toggle — 'g' key
+bool g_glow_enabled = true;
 
 // Ray Tracer
 cg::RayTracer *g_ray_tracer = 0;
@@ -323,17 +326,17 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     // Warm sandy colour with low-medium specular.
     auto floor_mat = std::make_shared<cg::MaterialNode>();
     floor_mat->set_ambient_and_diffuse(cg::Color4(0.76f, 0.65f, 0.42f, 1.0f)); // sand
-    floor_mat->set_specular(cg::Color4(0.25f, 0.22f, 0.15f, 1.0f));
-    floor_mat->set_shininess(12.0f);
+    floor_mat->set_specular(cg::Color4(0.07f, 0.06f, 0.04f, 1.0f));
+    floor_mat->set_shininess(4.0f);
     floor_mat->set_emission(cg::Color4(0.01f, 0.02f, 0.05f, 1.0f)); // very slight blue moonlit glow
     // Moonlit quartz sparkle: ~3% of grains glint blue-white
     floor_mat->enable_sparkle(0.97f, 80.0f, cg::Color3(0.3f, 0.6f, 1.0f), 3.0f);
     // Height-field floor: ray-marches against the procedural dune surface so
     // dune geometry (silhouettes, cast shadows, parallax) is real, not faked.
     // height_scale=0.7 → dune crests reach ~1.0 wu above base_y=-1 (y≈0).
-    auto floor_sphere = std::make_shared<cg::HeightFieldFloorNode>(-1.0f, 0.7f);
+    auto floor_sphere = std::make_shared<cg::HeightFieldFloorNode>(-1.0f, 1.2f);
     // Micro-ripple bump shader layered on top of the geometric dune surface.
-    auto floor_nm = std::make_shared<cg::SandBumpNode>();
+    auto floor_nm = std::make_shared<cg::SandBumpNode>(0.30f, 0.18f, 2.5f, 0.23f, 0.55f);
     floor_nm->add_child(floor_sphere);
     floor_mat->add_child(floor_nm);
     scene_node->add_child(floor_mat);
@@ -384,17 +387,16 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     rock_mat->set_shininess(24.0f);
     rock_mat->set_emission(cg::Color4(0.015f, 0.018f, 0.03f, 1.0f)); // dimmer moonlit glow
 
-    // Helper lambda: wrap a rock mesh in a transform (scale + translate) under rock_mat
-    // burial > 0 sinks the rock below the sand surface for a "partially buried" look
+    // Helper lambda: wrap a rock mesh in a transform (scale + translate) under rock_mat.
+    // burial > 0 sinks the rock below the sand surface for a "partially buried" look.
+    // All levels render the full OBJ mesh; lod_threshold marks where a sphere stand-in
+    // would have been used had we had a low-poly model.
     auto make_rock_lod = [&](const std::string &obj, float scale,
                               float tx, float tz, float burial,
-                              float lod_threshold, float sphere_radius) {
+                              float lod_threshold, float /*sphere_radius*/) {
         auto lod = std::make_shared<cg::LODNode>(obj);
         lod->set_position(cg::Point3(tx, -1.0f - burial, tz));
 
-        const float cy = -1.0f - burial + sphere_radius * 0.5f;
-
-        // HIGH level (dist < 40): detailed OBJ mesh
         auto mesh = load_obj_mesh(obj);
         if (mesh)
         {
@@ -402,18 +404,12 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
             xform->translate(tx, -1.0f - burial, tz);
             xform->scale(scale, scale, scale);
             xform->add_child(mesh);
-            lod->add_level(40.0f, xform);
+
+            // Within threshold: full mesh, no LOD switch needed
+            lod->add_level(lod_threshold, xform, "high-poly mesh");
+            // Beyond threshold: still full mesh — would have been a sphere stand-in
+            lod->add_level(1e30f, xform, "would have LOD'd to sphere — rendering full mesh anyway");
         }
-
-        // MED level (dist < lod_threshold): sphere stand-in
-        auto med_sphere = std::make_shared<cg::RTSphereNode>(
-            cg::Point3(tx, cy, tz), sphere_radius);
-        lod->add_level(lod_threshold, med_sphere);
-
-        // LOW level (dist >= lod_threshold): same sphere, indistinguishable at distance
-        auto low_sphere = std::make_shared<cg::RTSphereNode>(
-            cg::Point3(tx, cy, tz), sphere_radius);
-        lod->add_level(1e30f, low_sphere);
 
         return lod;
     };
@@ -442,16 +438,17 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     mid_rocks->add_child(make_rock_lod("model/rock5.obj", 2.8f, -3.5f, 10.0f, 0.2f, 32.0f, 0.65f));
     mid_rocks->add_child(make_rock_lod("model/rock6.obj", 4.0f,  2.0f, 13.0f, 0.4f, 32.0f, 0.95f));
 
-    // ---------- FAR ROCKS (AABBNode: rocks 7-9, z:20..33 — spheres only) ----------
-    // Always low detail; demonstrates AABB culling at large angles without LOD overhead
+    // ---------- FAR ROCKS (AABBNode: rocks 7-9, z:20..33) ----------
+    // Previously sphere-only; now rendered as full meshes with a lod_threshold=0
+    // so the print always reports "would have LOD'd to sphere."
     auto far_rocks = std::make_shared<cg::AABBNode>();
     far_rocks->set_name("FarRocks");
     far_rocks->set(cg::Point3(-10.0f, -2.0f, 19.0f), cg::Point3(8.0f, 2.0f, 34.0f));
     rock_tex->add_child(far_rocks);
 
-    far_rocks->add_child(std::make_shared<cg::RTSphereNode>(cg::Point3(-7.0f, -0.8f, 22.0f), 1.2f));
-    far_rocks->add_child(std::make_shared<cg::RTSphereNode>(cg::Point3( 4.5f, -0.9f, 27.0f), 0.9f));
-    far_rocks->add_child(std::make_shared<cg::RTSphereNode>(cg::Point3(-1.5f, -1.0f, 32.0f), 1.5f));
+    far_rocks->add_child(make_rock_lod("model/rock7.obj", 4.0f, -7.0f, 22.0f, 0.4f,  0.0f, 1.2f));
+    far_rocks->add_child(make_rock_lod("model/rock8.obj", 3.0f,  4.5f, 27.0f, 0.35f, 0.0f, 0.9f));
+    far_rocks->add_child(make_rock_lod("model/rock9.obj", 5.0f, -1.5f, 32.0f, 0.75f, 0.0f, 1.5f));
 
     rock_mat->add_child(rock_tex);
     scene_node->add_child(rock_mat);
@@ -876,6 +873,13 @@ cg::EventType handle_key_event(const SDL_Event &event)
         case SDLK_K:
             g_sparkle_enabled = !g_sparkle_enabled;
             std::cout << "Sparkle: " << (g_sparkle_enabled ? "ON" : "OFF") << "\n";
+            result = cg::EventType::REDRAW;
+            break;
+
+        // Toggle atmospheric glow (additive in-scattering — no extinction)
+        case SDLK_G:
+            g_glow_enabled = !g_glow_enabled;
+            std::cout << "Atmospheric glow: " << (g_glow_enabled ? "ON" : "OFF") << "\n";
             result = cg::EventType::REDRAW;
             break;
 

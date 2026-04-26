@@ -9,19 +9,27 @@
 #include "RayTracer/height_field_floor_node.hpp"
 
 #include <cmath>
+#include <cstdint>
 
 // ── Dune height-field helpers (file-private) ──────────────────────────────
 namespace
 {
 
+// Integer hash replacing the sinf-based hash — avoids transcendental math in
+// the march inner loop. Inputs are integer-valued floats (grid cell corners).
+static inline float hash_f(float a, float b)
+{
+    uint32_t u = static_cast<uint32_t>(static_cast<int32_t>(a));
+    uint32_t v = static_cast<uint32_t>(static_cast<int32_t>(b));
+    uint32_t h = (u * 1664525u) ^ (v * 1013904223u) ^ 0x9e3779b9u;
+    h ^= h >> 16; h *= 0x45d9f3bu; h ^= h >> 16;
+    return static_cast<float>(h) * (1.0f / 4294967296.0f);
+}
+
 // Smooth 2D value noise — bilinear interpolation of a hashed grid.
 // Quintic smooth-step gives C2 continuity; output in [0, 1].
 static float value_noise_2d(float x, float y)
 {
-    auto fract_f = [](float v) { return v - std::floor(v); };
-    auto hash_f  = [&](float a, float b) {
-        return fract_f(fabsf(sinf(a * 127.1f + b * 311.7f) * 43758.5453f));
-    };
     float ix = std::floor(x), iy = std::floor(y);
     float fx = x - ix,        fy = y - iy;
     float ux = fx * fx * fx * (fx * (fx * 6.0f - 15.0f) + 10.0f);
@@ -42,55 +50,44 @@ static float dune_profile(float t)
     const float peak = 0.62f;
     if (t < peak) {
         float s = t / peak;
-        return s * s * (3.0f - 2.0f * s);       // windward: smooth-step 0→1
+        return s * s * (3.0f - 2.0f * s);
     } else {
         float s = (t - peak) / (1.0f - peak);
-        return 1.0f - s * s;                      // leeward: steep quadratic drop
+        return 1.0f - s * s;
     }
 }
 
-// Single dune-ridge layer at world position (wx, wz).
-//   period    — crest-to-crest distance in world units
-//   rotation  — ridge orientation angle (radians)
-//   noise_val — domain-warp value in [0, 1]; shifts ridge phase laterally
+// Single dune-ridge layer. cos_r/sin_r are precomputed from the ridge angle.
 static float dune_layer(float wx, float wz,
-                        float period, float rotation, float noise_val)
+                        float period, float cos_r, float sin_r, float noise_val)
 {
-    const float gap_frac = 0.35f;               // 35% of each period is flat sand
-    float dune_w = period * (1.0f - gap_frac);  // width of one dune profile
+    const float gap_frac = 0.35f;
+    float dune_w = period * (1.0f - gap_frac);
 
-    float shift = noise_val * period * 0.70f;   // domain-warp phase offset
-
-    float xb = wx * cosf(rotation) - wz * sinf(rotation);
-
-    float raw = xb + shift;
-    float cp  = raw - period * std::floor(raw / period); // position in [0, period)
+    float shift = noise_val * period * 0.70f;
+    float xb    = wx * cos_r - wz * sin_r;
+    float raw   = xb + shift;
+    float cp    = raw - period * std::floor(raw / period);
 
     float t = cp / dune_w;
     return (t <= 1.0f) ? dune_profile(t) : 0.0f;
 }
 
+// Precomputed rotation constants — evaluated once, stored as static locals.
+static float s_cos1() { static const float v = std::cos(-3.14159265f * 0.25f); return v; }
+static float s_sin1() { static const float v = std::sin(-3.14159265f * 0.25f); return v; }
+static float s_cos2() { static const float v = std::cos(-3.14159265f * 0.18f); return v; }
+static float s_sin2() { static const float v = std::sin(-3.14159265f * 0.18f); return v; }
+
 // Two-octave dune height at world position (wx, wz).
 // Returns a value in roughly [0, 1.45].  Caller scales by height_scale_.
-//
-// Implements the article's formula: Dunes(x, y, width, depth) applied in two
-// overlapping layers at different scales / orientations / domain warps.
 static float dune_height_at(float wx, float wz)
 {
-    const float PI = 3.14159265f;
-
-    // Domain-warp noise for each octave.
-    // Scale 0.09 → grid cells ~11 wu, giving several variation cells across the
-    // ~50 wu deep visible scene.  Offsets prevent the degenerate sin(0)=0 corner
-    // of the hash from zeroing the warp near the world origin.
     float ns1 = value_noise_2d(wx * 0.09f + 1.7f, wz * 0.09f + 0.9f);
     float ns2 = value_noise_2d(wx * 0.13f + 5.1f, wz * 0.13f + 2.9f);
 
-    // Octave 1 — large dunes (~18 wu crest-to-crest), ridges at -45°
-    float h1 = dune_layer(wx, wz, 18.0f, -PI * 0.25f, ns1);
-
-    // Octave 2 — smaller dunes (~8 wu), slightly different angle, half amplitude
-    float h2 = dune_layer(wx, wz,  8.0f, -PI * 0.18f, ns2);
+    float h1 = dune_layer(wx, wz, 18.0f, s_cos1(), s_sin1(), ns1);
+    float h2 = dune_layer(wx, wz,  8.0f, s_cos2(), s_sin2(), ns2);
 
     return h1 + 0.45f * h2;
 }
@@ -129,7 +126,7 @@ float HeightFieldFloorNode::surface_y(float x, float z) const
 
 static constexpr float XZ_STEP  = 0.30f;  // max horizontal step (world units)
 static constexpr float MAX_T    = 250.0f; // give up after this distance
-static constexpr int   BISECT_N = 12;     // bisection refinement iterations
+static constexpr int   BISECT_N = 8;      // bisection refinement iterations
 
 void HeightFieldFloorNode::find_closest_intersect(Ray3         ray,
                                                    SceneState  &current_state,

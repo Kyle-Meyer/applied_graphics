@@ -11,6 +11,7 @@
 // Toggles declared in main.cpp
 extern bool g_normal_map_enabled;
 extern bool g_sparkle_enabled;
+extern bool g_glow_enabled;
 
 namespace cg
 {
@@ -345,8 +346,15 @@ Color3 RayTracer::trace_ray(Ray &ray)
     // (do not spawn additional rays)
     if(ray.recursion_level_ <= 0 || ray.below_threshold())
     {
-       color.clamp();
-       return color;
+        if (g_glow_enabled)
+        {
+            float glow_t = 1.0f - std::exp(-0.004f * closest.t_min);
+            color.r += 0.010f * glow_t;
+            color.g += 0.018f * glow_t;
+            color.b += 0.055f * glow_t;
+        }
+        color.clamp();
+        return color;
     }
 
     // Spawn a reflected ray if material is reflective - add to color
@@ -408,6 +416,16 @@ Color3 RayTracer::trace_ray(Ray &ray)
             color.g += reflected_color.g * transmission.g;
             color.b += reflected_color.b * transmission.b;
         }
+    }
+
+    // Atmospheric in-scattering: additive moonlit haze that increases with distance
+    // without attenuating scene color (no extinction — distant objects stay visible).
+    if (g_glow_enabled)
+    {
+        float glow_t = 1.0f - std::exp(-0.004f * closest.t_min);
+        color.r += 0.010f * glow_t;
+        color.g += 0.018f * glow_t;
+        color.b += 0.055f * glow_t;
     }
 
     // Clamp color
