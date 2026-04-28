@@ -23,6 +23,7 @@
 #include "RayTracer/height_field_floor_node.hpp"
 #include "RayTracer/normal_map_node.hpp"
 #include "RayTracer/sand_bump_node.hpp"
+#include "RayTracer/stone_normal_node.hpp"
 #include "RayTracer/desert_rock_texture.hpp"
 #include "RayTracer/ray_tracer.hpp"
 #include "RayTracer/rt_sphere_node.hpp"
@@ -92,6 +93,9 @@ bool g_sparkle_enabled = true;
 
 // Atmospheric glow toggle — 'g' key
 bool g_glow_enabled = true;
+
+// Dune height field toggle — 'd' key (off = flat floor at base_y)
+bool g_height_field_enabled = true;
 
 // Ray Tracer
 cg::RayTracer *g_ray_tracer = 0;
@@ -366,7 +370,7 @@ std::shared_ptr<cg::SceneNode> construct_scene(std::shared_ptr<cg::CameraNode> c
     obelisk_xform->translate(0.0f, -1.0f, 2.0f); // base on sand, slightly in front
     // Normal map gives the obelisk a subtle stone/granite texture.
     // Strength 0.4 keeps the smooth glistening feel while adding surface detail.
-    auto obelisk_nm = std::make_shared<cg::NormalMapNode>("stone_normal.png", 0.4f);
+    auto obelisk_nm = std::make_shared<cg::StoneNormalNode>(4.0f, 5, 0.4f);
     obelisk_nm->add_child(make_obelisk());
     obelisk_xform->add_child(obelisk_nm);
 
@@ -880,6 +884,13 @@ cg::EventType handle_key_event(const SDL_Event &event)
         case SDLK_G:
             g_glow_enabled = !g_glow_enabled;
             std::cout << "Atmospheric glow: " << (g_glow_enabled ? "ON" : "OFF") << "\n";
+            result = cg::EventType::REDRAW;
+            break;
+
+        // Toggle dune height field (off = flat floor at base_y)
+        case SDLK_D:
+            g_height_field_enabled = !g_height_field_enabled;
+            std::cout << "Dune height field: " << (g_height_field_enabled ? "ON" : "OFF") << "\n";
             result = cg::EventType::REDRAW;
             break;
 

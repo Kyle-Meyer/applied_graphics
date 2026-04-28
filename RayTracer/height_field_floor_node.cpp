@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstdint>
 
+extern bool g_height_field_enabled;
+
 // ── Dune height-field helpers (file-private) ──────────────────────────────
 namespace
 {
@@ -110,6 +112,8 @@ HeightFieldFloorNode::HeightFieldFloorNode(float base_y, float height_scale)
 
 float HeightFieldFloorNode::surface_y(float x, float z) const
 {
+    if (!g_height_field_enabled)
+        return base_y_;
     return base_y_ + height_scale_ * dune_height_at(x, z);
 }
 
